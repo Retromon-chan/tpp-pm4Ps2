@@ -99,7 +99,7 @@ thisAddon.handleExport = async function(targetPath, options = {}) {
 thisAddon.registerProjectWizard = function() {
     const $slide = $("<div><h2>Princess Maker 4 (PS2)</h2><p>Open the Japanese PS2 ISO (SLPM_659.36). Import dialogue, choices, item text, and editable interface image sheets. Export or Inject creates a separate translated ISO.</p><p>Text translations must fit the original CP932 byte budgets and preserve line counts and % codes. Image sheets keep their original dimensions. Fonts are not edited.</p><div class='parserFields'></div></div>");
     ui.newProjectDialog.addMenu({
-        icon: thisAddon.getWebLocation() + "/icon.png", descriptionBar: "<h2>Princess Maker 4 (PS2)</h2>", actionBar: "",
+        icon: thisAddon.getWebLocation() + "/" + thisAddon.package.icon, descriptionBar: "<h2>Princess Maker 4 (PS2)</h2>", actionBar: "",
         goToSlide: thisAddon.package.name, at: 8,
         slides: {parser: ui.newProjectDialog.newSlide(thisAddon.package.name, $slide, {
             buttons: [{text: t("Create Project"), click: async function() {
