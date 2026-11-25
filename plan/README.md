@@ -15,7 +15,7 @@ encoding carry over; PS2 resource discovery and VM parsing were measured anew.
   resource buffers are small. Export hashes a streamed copy of the original,
   writes only fixed-size resource ranges, rereads those ranges, then publishes
   through an exclusive hard link. Outputs require a filesystem supporting hard
-  links (NTFS on this Windows host). Existing outputs are never overwritten.
+  links (such as NTFS). Existing outputs are never overwritten.
 
 | Resource | Absolute ISO offset | Bytes | Distinct rows | Occurrences |
 | --- | ---: | ---: | ---: | ---: |
@@ -112,7 +112,6 @@ Translation preflight aggregates every invalid row across all selected resources
 deduplicating repeated occurrences of the same error while retaining contexts.
 Errors carry structured `issues` and display one-based grid row numbers and byte
 reductions. `validateResource()` runs the same checks without writing output.
-Real-disc application checks are recorded in the workspace validation report.
 No emulator or hardware playback result is claimed.
 
 ## SPD/TIM2 image extraction and re-import

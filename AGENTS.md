@@ -1,9 +1,9 @@
 # Working on pm4Ps2
 
 This parser supports the Japanese PS2 release SLPM_659.36. Use the
-[PM4 case map](../../docs/console-rom-parser/cases/pm4-ps2.md) to select relevant
-README/plan sections before changing format logic. Do not load unrelated case
-notes or apply PC patch offsets/GCEX assumptions to the PS2 disc.
+[case map](plan/case-map.md) to select relevant
+README/plan sections before changing format logic. Do not apply PC patch
+offsets/GCEX assumptions to the PS2 disc.
 
 1. Keep measured signatures, encoding, extraction rules, and limitations in
    plan/README.md current. Retail game bytes must not be committed as fixtures.
