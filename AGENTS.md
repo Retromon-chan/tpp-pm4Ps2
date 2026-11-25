@@ -24,7 +24,7 @@ notes or apply PC patch offsets/GCEX assumptions to the PS2 disc.
 6. Run `node --test www/addons/pm4Ps2/test/pm4Ps2.module.test.js`
    and `node --test www/addons/pm4Ps2/test/pm4Ps2.images.test.js`
    and `node --test www/addons/pm4Ps2/test/pm4Ps2.keyboard.test.js`
-   from the repository root. Also exercise New Project, reopen, folder/zip export,
+   from the Translator++ root. Also exercise New Project, reopen, folder/zip export,
    inject, and update in Translator++. Verify module loading after compilation.
 
 Do not modify original game resources during extraction or export. Preserve
@@ -56,3 +56,26 @@ imageTranslatorHandled after packing them. Never ship loose PNGs as if injected.
 The English keyboard is explicit opt-in on Inject. Preserve two-byte input slots,
 row terminators, executable instructions and all bytes outside the two table
 regions. Patch both page images and tables together, regardless of selected files.
+
+## Repository and releases
+
+This folder is its own git repository,
+[pismax/tpp-pm4Ps2](https://github.com/pismax/tpp-pm4Ps2), cloned at
+`<Translator++>/www/addons/pm4Ps2` so the app loads it and the tests can require
+`www/js/...`. Commit here as `pismax <360907843+pismax@users.noreply.github.com>`
+(set in this clone's git config). Never commit these files to the Translator++
+repository, and never add other identities, emails or local paths.
+
+To release:
+
+1. Bump `version` in `package.json` (and the top-level and root-package
+   versions in `package-lock.json` when present). Raise `minimumVersion` when
+   the code needs a newer Translator++.
+2. Describe the user-facing change under a new version heading in
+   `CHANGELOG.md`.
+3. Run the tests above, commit, then `git tag v<version>` and
+   `git push origin main v<version>`. Never move a published tag.
+4. In the catalog repository [pismax/tpp-addons](https://github.com/pismax/tpp-addons),
+   set this add-on's `ref` to the new tag, update its README table, run
+   `node scripts/validate-catalog.js`, and push. Translator++ offers the update
+   within a few minutes.
