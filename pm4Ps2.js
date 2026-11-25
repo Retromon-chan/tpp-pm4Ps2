@@ -22,9 +22,10 @@ thisAddon.prepareNewProject = async function(info = {}) {
     let scanned;
     try {
         ui.log("Reading the PS2 disc and checking its checksum. The original ISO is kept unchanged.");
-        scanned = await parser.pm4Ps2Project.scan(nwPath.resolve(info.entryPoint), {init: info});
+        scanned = await parser.pm4Ps2Project.scan(nwPath.resolve(info.entryPoint), {includeTestScripts: info.includeTestScripts});
         const init = {entryPoint: scanned.isoPath, includeTestScripts: Boolean(info.includeTestScripts),
-            includeImages: info.includeImages !== false, ocrImages: info.ocrImages !== false,
+            includeImages: info.includeAllImages === true || info.includeImages !== false,
+            includeAllImages: info.includeAllImages === true, ocrImages: info.ocrImages !== false,
             projectTitle: info.projectTitle || parserTitle, sourceManifest: scanned.manifest};
         return await thisAddon.createProject(scanned.files, scanned.sourceDir, {init});
     } finally {
@@ -97,7 +98,7 @@ thisAddon.handleExport = async function(targetPath, options = {}) {
 };
 
 thisAddon.registerProjectWizard = function() {
-    const $slide = $("<div><h2>Princess Maker 4 (PS2)</h2><p>Open the Japanese PS2 ISO (SLPM_659.36). Import dialogue, choices, item text, and editable interface image sheets. Export or Inject creates a separate translated ISO.</p><p>Text translations must fit the original CP932 byte budgets and preserve line counts and % codes. Image sheets keep their original dimensions. Fonts are not edited.</p><div class='parserFields'></div></div>");
+    const $slide = $("<div><h2>Princess Maker 4 (PS2)</h2><p>Open the Japanese PS2 ISO (SLPM_659.36). Import dialogue, choices, item text, and editable artwork. Export or Inject creates a separate patched ISO.</p><p>Text translations must fit the original CP932 byte budgets and preserve line counts and % codes. Image sheets keep their original dimensions.</p><div class='parserFields'></div></div>");
     ui.newProjectDialog.addMenu({
         icon: thisAddon.getWebLocation() + "/" + thisAddon.package.icon, descriptionBar: "<h2>Princess Maker 4 (PS2)</h2>", actionBar: "",
         goToSlide: thisAddon.package.name, at: 8,
@@ -113,10 +114,11 @@ thisAddon.registerProjectWizard = function() {
                         entryPoint: {type: "string", title: "Japanese PS2 ISO", required: true},
                         projectTitle: {type: "string", title: "Project title", default: parserTitle},
                         includeImages: {type: "boolean", title: "Include editable interface images", default: true},
-                        ocrImages: {type: "boolean", title: "Recognize image text with the configured OCR engine", default: true},
+                        includeAllImages: {type: "boolean", title: "Include all game artwork (including CGs)", default: false},
+                        ocrImages: {type: "boolean", title: "Recognize text on interface images with OCR", default: true},
                         includeTestScripts: {type: "boolean", title: "Include TEST.G2 and DEVTEST.G2 (development scripts)", default: false}
                     },
-                    form: [{key: "entryPoint", type: "selectfile", accept: ".iso"}, {key: "projectTitle"}, {key: "includeImages"}, {key: "ocrImages"}, {key: "includeTestScripts"}]
+                    form: [{key: "entryPoint", type: "selectfile", accept: ".iso"}, {key: "projectTitle"}, {key: "includeImages"}, {key: "includeAllImages"}, {key: "ocrImages"}, {key: "includeTestScripts"}]
                 }});
                 $slide.find(".parserFields").empty().append(thisAddon.projectField.getElm());
             }

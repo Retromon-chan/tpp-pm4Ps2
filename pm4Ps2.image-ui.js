@@ -20,6 +20,7 @@ function installRenderer(it) {
 module.exports = function install(addon, {trans, ui, common, addonLoader, OcrEngine, $}) {
     if (addon.imageSupportInstalled) return;
     addon.imageSupportInstalled = true;
+    const importing = new WeakSet();
     function imageTranslator() {
         wireImageTranslator();
         const it = addonLoader.getAddonByName("imageTranslator");
@@ -48,53 +49,89 @@ module.exports = function install(addon, {trans, ui, common, addonLoader, OcrEng
     }
     addon.addImageResources = async function(data, options = {}) {
         const it = imageTranslator(), init = data.project.options.init, cache = trans.getStagingPath(data);
-        const extraction = await parser.extractImages(init.entryPoint, path.join(cache, "images", "pm4"), {expectedSha256: init.sourceManifest.isoSha256});
-        const existing = new Map(imageEntries(data).map(([id, f]) => [f.pm4Image.resourceName, id]));
+        const includeAllImages = options.includeAllImages === true || init.includeAllImages === true;
+        if (includeAllImages) ui.log("Reading game artwork from the original ISO...");
+        const extraction = await parser.extractImages(init.entryPoint, path.join(cache, "images", "pm4"), {
+            expectedSha256: init.sourceManifest.isoSha256, includeAllImages,
+            onProgress: includeAllImages ? (done, total) => {
+                if (done % 50 === 0 || done === total) ui.log("Staged " + done + "/" + total + " PM4 image sheets.");
+            } : undefined
+        });
+        const existing = new Set(imageEntries(data).map(([, file]) => file.pm4Image.resourceName));
         const jobs = extraction.files.filter(record => !existing.has(record.name));
-        const engine = options.ocr === false ? null : OcrEngine.getMainEngine();
-        if (options.ocr !== false && !engine) throw new Error("No OCR engine is available. Disable Recognize image text to import editable sheets without OCR.");
-        const added = [], failures = [];
-        const process = async (record, i, recognize) => {
-            ui.log("Image " + (i + 1) + "/" + jobs.length + ": " + record.name);
-            let blocks = [];
-            if (engine) {
-                try { blocks = await it.translateImageAsset(await fs.promises.readFile(record.pngPath), {engineId: engine.id, recognize}); }
-                catch (error) { failures.push({name: record.name, error: error.message}); ui.log.error("OCR failed for " + record.name + ": " + error.message + ". The editable sheet is still imported."); }
+        const ocrJobs = options.ocr === false ? [] : jobs.filter(record => codec.isImageCandidate(record.name));
+        const engine = ocrJobs.length ? OcrEngine.getMainEngine() : null;
+        if (ocrJobs.length && !engine) throw new Error("No OCR engine is available. Turn off interface OCR in New Project or use Add all game artwork in an existing project.");
+        const ocrBlocks = new Map(), failures = [];
+        if (engine) await it.runOcrJobs(ocrJobs, engine, {ocrWorkerCount: 2}, async (record, i, recognize) => {
+            ui.log("Recognizing image " + (i + 1) + "/" + ocrJobs.length + ": " + record.name);
+            try {
+                const blocks = await it.translateImageAsset(await fs.promises.readFile(record.pngPath), {engineId: engine.id, recognize});
+                ocrBlocks.set(record.name, blocks);
+            } catch (error) {
+                failures.push({name: record.name, error: error.message});
+                ui.log.error("OCR failed for " + record.name + ": " + error.message + ". The editable sheet is still imported.");
             }
+        });
+        const files = jobs.map(record => {
             const relative = "images/pm4/" + path.basename(record.pngPath);
-            const file = it.buildImageFileEntry(relative, blocks, {width: record.width, height: record.height,
-                engineId: engine?.id, stagingPath: relative, sourceExtension: ".png", originalFormat: "PM4 PS2 SPD / TIM2 RGBA32"});
+            const file = it.buildImageFileEntry(relative, ocrBlocks.get(record.name) || [], {width: record.width, height: record.height,
+                engineId: ocrBlocks.has(record.name) ? engine.id : undefined,
+                stagingPath: relative, sourceExtension: ".png", originalFormat: "PM4 PS2 SPD / TIM2 RGBA32"});
             file.pm4Image = {resourceName: record.name, originalPixelSha256: record.pixelSha256};
-            // Keep even empty OCR results: a picture can be painted manually.
-            data.project.files[file.path] = file; added.push(file.path);
-        };
-        if (engine) await it.runOcrJobs(jobs, engine, {ocrWorkerCount: 2}, process);
-        else for (let i = 0; i < jobs.length; i++) await process(jobs[i], i);
+            return file;
+        });
+        for (const file of files) data.project.files[file.path] = file;
         init.sourceManifest.imageResources = extraction.manifest.imageResources;
-        init.includeImages = true; init.ocrImages = options.ocr !== false;
-        return {added, failures, count: extraction.files.length};
+        if (includeAllImages) init.sourceManifest.includeAllImages = true;
+        if (!init.includeImages || engine) init.ocrImages = options.ocr !== false;
+        init.includeImages = true;
+        init.includeAllImages = includeAllImages;
+        return {added: files.map(file => file.path), failures, count: extraction.files.length};
     };
     addon.importGameImages = async function(options = {}) {
-        currentProject(); ui.showLoading();
+        currentProject();
+        const project = trans.project;
+        if (importing.has(project)) throw new Error("Princess Maker 4 images are already being imported.");
+        importing.add(project);
         try {
-            const data = {project: trans.project}, result = await addon.addImageResources(data, options);
-            for (const id of result.added) trans.addFileToNavigator(id, trans.project.files[id]);
-            trans.reindexFileNavigator(); trans.evalTranslationProgress(result.added); trans.gridIsModified(true);
+            ui.showLoading();
+            const result = await addon.addImageResources({project}, options);
+            if (trans.project === project) {
+                if (result.added.length) {
+                    trans.syncFileNavigator();
+                    trans.evalTranslationProgress(result.added);
+                }
+                trans.gridIsModified(true);
+            }
             return result;
-        } finally { ui.loadingEnd(); }
+        } finally {
+            importing.delete(project);
+            ui.loadingEnd();
+        }
     };
     addon.exportEditableImages = async function(directory) {
-        currentProject(); const entries = imageEntries({project: trans.project}), prepared = [];
-        if (!entries.length) throw new Error("Use Add game images to this project first.");
+        currentProject(); const entries = imageEntries({project: trans.project});
+        if (!entries.length) throw new Error("Use Add game images to this project or Add all game artwork first.");
         await fs.promises.mkdir(directory, {recursive: true});
-        for (const [, file] of entries) {
-            const target = path.join(directory, file.pm4Image.resourceName.replace(/\.SPD$/, ".png"));
+        const exports = entries.map(([, file]) => ({file, target: path.join(directory, file.pm4Image.resourceName.replace(/\.SPD$/, ".png"))}));
+        for (const {target} of exports) {
             if (fs.existsSync(target)) throw new Error("PNG already exists; choose an empty folder: " + target);
-            const png = hasEdits(file) ? await renderedPng(file) : await fs.promises.readFile(imageTranslator().getImageAbsPath(file));
-            codec.decodePng(png); prepared.push({target, png});
         }
-        for (const {target, png} of prepared) await fs.promises.writeFile(target, png, {flag: "wx"});
-        return prepared.map(p => p.target);
+        const written = [], it = imageTranslator();
+        try {
+            for (const {file, target} of exports) {
+                const png = hasEdits(file) ? await renderedPng(file) : await fs.promises.readFile(it.getImageAbsPath(file));
+                codec.decodePng(png);
+                const handle = await fs.promises.open(target, "wx");
+                written.push(target);
+                try { await handle.writeFile(png); } finally { await handle.close(); }
+            }
+            return written;
+        } catch (error) {
+            await Promise.allSettled(written.map(target => fs.promises.unlink(target)));
+            throw error;
+        }
     };
     addon.importEditedImages = async function(directory) {
         currentProject(); const it = imageTranslator(), entries = imageEntries({project: trans.project});
@@ -217,7 +254,20 @@ module.exports = function install(addon, {trans, ui, common, addonLoader, OcrEng
         action("Add game images to this project...", async () => {
             const result = await addon.importGameImages({ocr: true}); ui.log("Imported " + result.added.length + " PM4 image sheets.");
         });
-        action("Export PNGs for editing...", async () => { currentProject(); const dir = await ui.openFileDialog({dir: true}); if (dir) await addon.exportEditableImages(dir); });
+        action("Add all game artwork (without OCR)...", async () => {
+            const result = await addon.importGameImages({includeAllImages: true, ocr: false});
+            ui.log("Added " + result.added.length + " PM4 image sheets. The full set of " + result.count + " sheets is available in Images.");
+        });
+        action("Export PNGs for editing...", async () => {
+            currentProject(); const dir = await ui.openFileDialog({dir: true});
+            if (!dir) return;
+            ui.showLoading();
+            try {
+                ui.log("Exporting editable PM4 PNGs...");
+                const paths = await addon.exportEditableImages(dir);
+                ui.log("Exported " + paths.length + " PM4 PNGs to " + dir);
+            } finally { ui.loadingEnd(); }
+        });
         action("Import edited PNGs...", async () => { currentProject(); const dir = await ui.openFileDialog({dir: true}); if (dir) { const ids = await addon.importEditedImages(dir); ui.log("Re-imported " + ids.length + " edited PM4 sheet(s). Export or Inject to apply them to the ISO."); } });
     });
 };

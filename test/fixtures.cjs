@@ -37,6 +37,7 @@ function iso(options = {}) {
         {name: "ITEM_MSG.TXT", lba: 27, bytes: iconv.encode("\r\n強い剣\r\n強い盾\r\n", "cp932")}
     ];
     if (options.images) files.push({name: "W_STAT1.SPD", lba: 30, bytes: spd(260, 8)});
+    if (options.artwork) files.push({name: "EV01.SPD", lba: 36, bytes: spd(32, 32)});
     if (options.keyboard) files.push({name: "ENTRY2A.SPD", lba: 60, bytes: spd(640, 448)}, {name: "ENTRY2B.SPD", lba: 630, bytes: spd(640, 448)});
     filesystem(cvm, 0x1800, files);
     const outer = [{name: "SYSTEM.CNF", lba: 22, bytes: Buffer.from("BOOT2 = cdrom0:\\SLPM_659.36;1\r\n")}, {name: "DATA.BIN", lba: 24, bytes: cvm}];

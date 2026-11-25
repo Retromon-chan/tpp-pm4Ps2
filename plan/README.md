@@ -119,7 +119,9 @@ No emulator or hardware playback result is claimed.
 The 80 curated interface candidates match W_*, TMENU*, ENTRY*, SCHD01–23,
 HAR01–14, ALBUM1–3, MAP01/MAP02A/MAP02B, EXPLA, and LOGO1–3. This includes
 some non-lettered/decorative sheets; it avoids character/face and ordinary scene
-art. All 80 on the inspected disc use the supported layout below.
+art. The full artwork import discovers all 1,263 `.SPD` files in the embedded
+ISO root. These include event and ending CGs, backgrounds, character sheets,
+portraits and thumbnails. All 1,263 on the inspected disc use the layout below.
 
 - SPD header: `SPD\0`, u32 total size, u32 section count, reserved u32. At +16,
   sections are 16-byte records: u32 ID, size, offset, reserved. Section 1 holds
@@ -140,7 +142,10 @@ The PNG bridge encodes lossless 8-bit RGBA and reads non-interlaced 8-bit RGBA,
 RGB, indexed and grayscale PNGs, with all five PNG row filters and CRC checks.
 Unsupported depths/interlacing or changed dimensions fail before ISO creation.
 
-New projects can extract and OCR images; existing ones use the Tools menu.
+New projects can opt into all artwork, with optional OCR on the interface subset.
+The Tools menu adds all artwork without OCR. The project keeps the selected
+scope for updates, and export verifies the manifest using that scope. Existing
+interface-only projects keep that scope until all artwork is added.
 Decoded originals are staged at `images/pm4/*.png`, with `type: image` entries
 and `pm4Image` resource provenance. Even empty OCR results remain editable.
 External PNG imports become versioned Krita/replacement layers; the Original
@@ -162,6 +167,11 @@ equal the expected replacement. The other 79 image resources, sprite metadata,
 unrelated disc bytes, and original ISO were unchanged. The working project's
 temporary VIT test layer was restored afterward. Image gameplay verification is
 left to the user; only the earlier text patch has their playback confirmation.
+
+Full artwork validation on the retail disc decoded and rebuilt all 1,263
+sheets byte-for-byte. A one-pixel edit to `EV01.SPD` was re-extracted from
+the patched ISO and matched the edited PNG. Only three bytes changed across
+the whole ISO, all inside that pixel's native payload.
 
 ## Optional PS2 English name-entry keyboard
 

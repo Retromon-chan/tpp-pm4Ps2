@@ -35,20 +35,21 @@ The normal rightmost nonempty translation and context overrides are supported.
   are refused. CP932 representability does not establish that a glyph exists in
   the game's font.
 
-## Translatable images and re-import
+## Game artwork and PNG editing
 
-New projects can include **80 editable interface sprite sheets**: status/menu
-labels, title and name-entry screens, schedule cards, certificates and maps.
-The current inspected project contains **307 OCR blocks** from the local Windows
-OneOCR engine. These are candidates for translation; some sheets also contain
-decorative artwork or no detected text. Fonts and movie subtitles are excluded.
+By default, new projects include **80 editable interface sheets**. Turn on
+**Include all game artwork (including CGs)** to load all **1,263 sprite sheets**
+from the Japanese PS2 disc, including event and ending CGs, backgrounds,
+character art, portraits, and thumbnails. The OCR option applies to interface
+sheets. Game movies and fonts are outside this workflow.
 
-For an existing project, choose **Tools → Princess Maker 4 (PS2) → Add game
-images to this project**. They appear in the **Images** pane. Use Image edit mode
-to translate OCR boxes or draw new ones, or use **Edit current image in Krita**.
-Untranslated boxes preserve the source pixels. OCR can group several nearby
-labels into a multiline block; adjust/draw individual boxes or edit the full
-sheet when necessary.
+In an existing project, choose **Tools → Princess Maker 4 (PS2) → Add all game
+artwork (without OCR)**. This adds missing sheets to the **Images** pane,
+including sheets without text, and keeps existing image edits and OCR boxes.
+**Add game images to this project** imports missing interface sheets with OCR.
+Use Image edit mode to draw or translate text boxes, or choose **Edit current
+image in Krita** to paint the whole sheet. Untranslated boxes preserve the
+source pixels.
 
 For another image editor:
 

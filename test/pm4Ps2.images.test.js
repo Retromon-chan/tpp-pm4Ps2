@@ -60,6 +60,64 @@ test("whole ISO image extraction and no-op/edited re-import preserve disc layout
         await assert.rejects(parser.extractImages(source, path.join(root, "pngs")), /different content/);
     } finally { await fs.rm(root, {recursive: true, force: true}); }
 });
+test("adding all artwork preserves interface edits and exports a text-free CG replacement", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "pm4-artwork-test-"));
+    try {
+        const source = path.join(root, "original.iso"), original = iso({images: true, artwork: true});
+        await fs.writeFile(source, original);
+        const staged = path.join(root, "stage"), addon = {finalizeTransData: async data => data};
+        const it = {
+            buildImageFileEntry: (relative, blocks, meta) => ({path: "/" + relative, type: "image", data: blocks, imageWidth: meta.width,
+                imageHeight: meta.height, imageStagingPath: meta.stagingPath}),
+            getImageAbsPath: file => path.join(staged, file.imageStagingPath),
+            getKritaRelativePath: () => "krita/EV01.png",
+            getKritaLayerAbsPath: file => path.join(staged, file.kritaLayer.imageStagingPath),
+            getImageLayerVisibility: file => file.layerVisibility,
+            importKritaLayerFromDisk() {},
+            renderImageToBuffer() { assert.fail("A full CG replacement should use the exact PNG bytes"); }
+        };
+        const init = {entryPoint: source, includeImages: true, ocrImages: false, sourceManifest: await parser.inspectIso(source)};
+        init.sourceManifest.isoSha256 = await parser.hashFile(source);
+        const project = {gameEngine: "pm4Ps2", files: {}, options: {init}};
+        const trans = {project, getStagingPath: () => staged, syncFileNavigator() {}, evalTranslationProgress() {}, gridIsModified() {}};
+        const ui = {onReady() {}, showLoading() {}, loadingEnd() {}, log() {}};
+        require("../pm4Ps2.image-ui.js")(addon, {trans, ui, addonLoader: {getAddonByName: () => it}});
+        const interfaceId = "/images/pm4/W_STAT1.png", cgId = "/images/pm4/EV01.png";
+        await addon.finalizeTransData({project}, null, {init});
+        assert.deepEqual(Object.keys(project.files), [interfaceId]);
+        const interfaceFile = project.files[interfaceId];
+        interfaceFile.data = [["Existing", "Translation"]];
+        const {added, count} = await addon.importGameImages({includeAllImages: true, ocr: false});
+        assert.deepEqual(added, [cgId]);
+        assert.equal(count, 2);
+        assert.equal(project.files[interfaceId], interfaceFile);
+        assert.deepEqual(project.files[cgId].data, []);
+        assert.equal(init.includeAllImages, true);
+        assert.equal(init.sourceManifest.includeAllImages, true);
+        assert.deepEqual((await addon.importGameImages({ocr: true})).added, []);
+        const refreshed = {options: {init: JSON.parse(JSON.stringify(init))}, files: {}};
+        await addon.finalizeTransData({project: refreshed}, null, refreshed.options);
+        assert.deepEqual(Object.keys(refreshed.files).sort(), [cgId, interfaceId]);
+
+        // Export the unedited CG to PNG, then import an edited copy and patch the ISO.
+        interfaceFile.data = [];
+        const exported = path.join(root, "pngs");
+        assert.equal((await addon.exportEditableImages(exported)).length, 2);
+        const image = codec.decodePng(await fs.readFile(path.join(exported, "EV01.png")));
+        image.data.set([255, 0, 255, 255]);
+        const edited = path.join(root, "edited");
+        await fs.mkdir(edited);
+        await fs.writeFile(path.join(edited, "EV01.png"), codec.encodePng(image));
+        assert.deepEqual(await addon.importEditedImages(edited), [cgId]);
+        const options = {files: [cgId], translationDatas: {}};
+        const [outputPath] = await addon.exportToFolder(root, {project}, options);
+        assert.equal(options.imageTranslatorHandled, true);
+        const output = await fs.readFile(outputPath), record = init.sourceManifest.imageResources.find(r => r.name === "EV01.SPD");
+        assert.deepEqual(codec.decodeSpd(output.subarray(record.offset, record.offset + record.size)), image);
+        assert.deepEqual(output.subarray(0, record.offset), original.subarray(0, record.offset));
+        assert.deepEqual(output.subarray(record.offset + record.size), original.subarray(record.offset + record.size));
+    } finally { await fs.rm(root, {recursive: true, force: true}); }
+});
 test("PNG re-import validates the complete batch before changing project layers", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "pm4-image-ui-test-"));
     try {

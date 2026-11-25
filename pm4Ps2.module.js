@@ -279,9 +279,11 @@ async function inspectIso(isoPath, options = {}) {
             resources.push({...record, sha256: hash(b)});
         }
         const manifest = {format: 1, serial: "SLPM_659.36", isoSize: stat.size, resources};
-        if (options.includeImages) {
+        if (options.includeImages || options.includeAllImages) {
+            if (options.includeAllImages) manifest.includeAllImages = true;
             manifest.imageResources = [];
-            for (const record of inner.filter(f => imageCodec.isImageCandidate(f.name))) {
+            const isSheet = options.includeAllImages ? name => /^[A-Z0-9_]+\.SPD$/.test(name) : imageCodec.isImageCandidate;
+            for (const record of inner.filter(f => isSheet(f.name))) {
                 const b = await readAt(handle, record.offset, record.size, stat.size), layout = imageCodec.parseSpd(b);
                 manifest.imageResources.push({...record, sha256: hash(b), width: layout.width, height: layout.height});
             }
@@ -319,6 +321,7 @@ async function extractImages(isoPath, destinationDir, options = {}) {
             if (fs.existsSync(destination)) check((await fs.promises.readFile(destination)).equals(png), "Extracted PNG already exists with different content: " + destination);
             else await fs.promises.writeFile(destination, png, {flag: "wx"});
             files.push({...record, pngPath: destination, pixelSha256: hash(image.data)});
+            options.onProgress?.(files.length, manifest.imageResources.length);
         }
     } finally { await handle.close(); }
     return {manifest, files};
@@ -344,7 +347,8 @@ async function exportIso(sourcePath, destinationPath, options = {}) {
     const expected = options.manifest;
     check(expected?.format === 1 && /^[a-f0-9]{64}$/.test(expected.isoSha256 || ""), "Project source manifest is missing. Recreate this project.");
     check(path.resolve(sourcePath).toLowerCase() !== path.resolve(destinationPath).toLowerCase(), "Cannot overwrite the source ISO.");
-    const actual = await inspectIso(sourcePath, {includeTestScripts: expected.resources.some(f => TEST_FILES.includes(f.name)), includeImages: Boolean(expected.imageResources), includeKeyboard: keyboard.isEnabled(options)});
+    const actual = await inspectIso(sourcePath, {includeTestScripts: expected.resources.some(f => TEST_FILES.includes(f.name)),
+        includeImages: Boolean(expected.imageResources), includeAllImages: expected.includeAllImages === true, includeKeyboard: keyboard.isEnabled(options)});
     check(JSON.stringify(actual.resources) === JSON.stringify(expected.resources) && actual.isoSize === expected.isoSize, "The source ISO no longer matches this project.");
     if (expected.imageResources) check(JSON.stringify(actual.imageResources) === JSON.stringify(expected.imageResources), "Source image resources no longer match this project.");
     for (const name of Object.keys(options.images || {})) check(expected.imageResources?.some(r => r.name === name), "Unrecognized PM4 image replacement: " + name);
