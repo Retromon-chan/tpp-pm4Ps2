@@ -290,12 +290,16 @@ async function inspectIso(isoPath, options = {}) {
         }
         if (options.includeKeyboard) {
             manifest.keyboardResources = [];
-            for (const name of keyboard.RESOURCES) {
+            for (const name of keyboard.resources(options.includeLongNames)) {
                 const record = (name === "SLPM_659.36" ? outer : inner).find(r => r.name === name);
                 check(record, "English keyboard resource is missing: " + name);
                 const b = await readAt(handle, record.offset, record.size, stat.size);
-                if (name === "SLPM_659.36") keyboard.inspectExecutable(b);
-                else { const image = imageCodec.parseSpd(b); check(image.width === 640 && image.height === 448, "Unsupported keyboard sheet dimensions."); }
+                if (name === "SLPM_659.36") keyboard.inspectExecutable(b, options.includeLongNames);
+                else {
+                    const image = imageCodec.parseSpd(b);
+                    const [width, height] = name === keyboard.NAME_PROMPT ? [456, 496] : [640, 448];
+                    check(image.width === width && image.height === height, "Unsupported keyboard sheet dimensions: " + name);
+                }
                 manifest.keyboardResources.push({...record, sha256: hash(b)});
             }
         }
@@ -347,8 +351,10 @@ async function exportIso(sourcePath, destinationPath, options = {}) {
     const expected = options.manifest;
     check(expected?.format === 1 && /^[a-f0-9]{64}$/.test(expected.isoSha256 || ""), "Project source manifest is missing. Recreate this project.");
     check(path.resolve(sourcePath).toLowerCase() !== path.resolve(destinationPath).toLowerCase(), "Cannot overwrite the source ISO.");
+    const longNames = keyboard.usesLongNames(options);
     const actual = await inspectIso(sourcePath, {includeTestScripts: expected.resources.some(f => TEST_FILES.includes(f.name)),
-        includeImages: Boolean(expected.imageResources), includeAllImages: expected.includeAllImages === true, includeKeyboard: keyboard.isEnabled(options)});
+        includeImages: Boolean(expected.imageResources), includeAllImages: expected.includeAllImages === true,
+        includeKeyboard: keyboard.isEnabled(options), includeLongNames: longNames});
     check(JSON.stringify(actual.resources) === JSON.stringify(expected.resources) && actual.isoSize === expected.isoSize, "The source ISO no longer matches this project.");
     if (expected.imageResources) check(JSON.stringify(actual.imageResources) === JSON.stringify(expected.imageResources), "Source image resources no longer match this project.");
     for (const name of Object.keys(options.images || {})) check(expected.imageResources?.some(r => r.name === name), "Unrecognized PM4 image replacement: " + name);
@@ -376,8 +382,11 @@ async function exportIso(sourcePath, destinationPath, options = {}) {
         for (const record of actual.keyboardResources || []) {
             const original = await readAt(handle, record.offset, record.size, expected.isoSize);
             const existing = patches.find(p => p.record.name === record.name);
-            const output = record.name === "SLPM_659.36" ? keyboard.patchExecutable(original) :
-                keyboard.patchKeyboardSheet(original, existing?.output || original, record.name === "ENTRY2A.SPD" ? 0 : 1);
+            const current = existing?.output || original;
+            let output;
+            if (record.name === "SLPM_659.36") output = keyboard.patchExecutable(original, longNames);
+            else if (record.name === keyboard.NAME_PROMPT) output = keyboard.patchNamePrompts(current);
+            else output = keyboard.patchKeyboardSheet(original, current, record.name === "ENTRY2A.SPD" ? 0 : 1);
             if (existing) existing.output = output;
             else if (!output.equals(original)) patches.push({record, output});
         }

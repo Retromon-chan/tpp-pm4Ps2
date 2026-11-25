@@ -236,9 +236,10 @@ module.exports = function install(addon, {trans, ui, common, addonLoader, OcrEng
         let output = path.join(directory, stem + ".iso"), version = 2;
         while (fs.existsSync(output)) output = path.join(directory, stem + "-" + version++ + ".iso");
         ui.log("Validating text and images, then exporting a separate ISO...");
-        const englishKeyboard = keyboard.isEnabled(options);
-        if (englishKeyboard) ui.log("Applying the English name-entry keyboard (uppercase/lowercase letters and numbers).");
-        const result = await parser.exportIso(init.entryPoint, output, {manifest: init.sourceManifest, translations, images, englishKeyboard});
+        const englishKeyboard = keyboard.isEnabled(options), longEnglishNames = keyboard.usesLongNames(options);
+        if (longEnglishNames) ui.log("Applying the English keyboard with 12 half-width characters per name field.");
+        else if (englishKeyboard) ui.log("Applying the English name-entry keyboard (uppercase/lowercase letters and numbers).");
+        const result = await parser.exportIso(init.entryPoint, output, {manifest: init.sourceManifest, translations, images, englishKeyboard, longEnglishNames});
         // Image Translator hides these files during Inject. They are already
         // inside our ISO and must not subsequently be written as loose PNGs.
         options.imageTranslatorHandled = true;

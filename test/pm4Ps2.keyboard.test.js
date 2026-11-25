@@ -22,6 +22,15 @@ test("unknown, ambiguous, non-MIPS and already-patched input tables are refused"
     const damaged = Buffer.from(b); damaged[256] ^= 1; assert.throws(() => keyboard.patchExecutable(damaged), /missing or ambiguous/);
     const duplicate = Buffer.concat([b, keyboard.tableBytes(keyboard.HIRAGANA)]); assert.throws(() => keyboard.patchExecutable(duplicate), /ambiguous/);
     assert.throws(() => keyboard.patchExecutable(keyboard.patchExecutable(b)), /missing/);
+    assert.throws(() => keyboard.patchExecutable(b, true), /original SLPM_659\.36 executable/);
+});
+test("long-name prompts replace only the first two title rows and preserve sprite metadata", () => {
+    const original = spd(456, 496), output = keyboard.patchNamePrompts(original);
+    const before = codec.decodeSpd(original), after = codec.decodeSpd(output);
+    const untouched = 72 * before.width * 4;
+    assert.deepEqual(codec.parseSpd(output), codec.parseSpd(original));
+    assert.notDeepEqual(after.data.subarray(0, untouched), before.data.subarray(0, untouched));
+    assert.deepEqual(after.data.subarray(untouched), before.data.subarray(untouched));
 });
 test("keyboard sheets preserve dimensions, sprite definitions and every pixel outside the key/caption regions", () => {
     const b = spd(640, 448), original = codec.decodeSpd(b), output = keyboard.patchKeyboardSheet(b, b, 0), image = codec.decodeSpd(output);
@@ -38,6 +47,11 @@ test("Inject switch is a default-off flipswitch and accepts only an explicit boo
     for (const options of [{}, {englishKeyboard: false}, {englishKeyboard: "false"}, {custom: {pm4EnglishKeyboard: "true"}}]) assert.equal(keyboard.isEnabled(options), false);
     assert.equal(keyboard.isEnabled({custom: {pm4EnglishKeyboard: true}}), true);
     assert.equal(keyboard.isEnabled({englishKeyboard: true, custom: {pm4EnglishKeyboard: false}}), false);
+    assert.equal(fields.schema.pm4LongEnglishNames.default, false);
+    assert.equal(fields.form[1].fieldHtmlClass, "flipSwitch");
+    assert.equal(keyboard.isEnabled({custom: {pm4LongEnglishNames: true}}), true);
+    assert.equal(keyboard.isEnabled({custom: {pm4LongEnglishNames: "true"}}), false);
+    assert.equal(keyboard.usesLongNames({longEnglishNames: true, custom: {pm4LongEnglishNames: false}}), false);
 });
 test("ISO opt-in patches only both keyboard sheets and input tables; off stays byte-identical", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "pm4-keyboard-test-"));

@@ -191,8 +191,9 @@ regions change; executable instructions and pointers stay intact.
 
 Both 640×448 `ENTRY2A.SPD`/`ENTRY2B.SPD` sheets are patched too. Keys are centered
 at `(68+36*column, 168+36*row)`; the four bottom buttons are ABC, abc, Back, OK.
-Clean paper is reconstructed locally from an original empty key cell, and the
-add-on's transparent overlays contain only newly rendered Latin typography.
+Dark lettering is removed using the neighboring parchment. Restoring the four
+original button regions first removes flat strips baked into older caption edits.
+The add-on's transparent overlays contain only newly rendered Latin typography.
 No retail artwork or executable content is shipped. The original sprite layout,
 dimensions and alpha encoding are retained. Existing image edits outside key
 and button masks survive; masks deliberately replace edits inside those areas.
@@ -222,3 +223,19 @@ rendering are therefore user-verified. Save/reload persistence, every punctuatio
 and digit key, Back, and the maximum-length boundary have not been individually
 reported as gameplay-tested; these are remaining regression checks, with no known
 implementation defect or required keyboard work outstanding.
+
+### Optional 12-character English names
+
+The long-name Inject switch also enables the English keyboard. It requires the
+retail ELF hash above. Both key tables keep their two-byte stride and terminators.
+An active key supplies one ASCII byte, while blank slots keep their native marker.
+Both input handlers enforce the same 12-byte limit as before. The append, delete,
+cached length and automatic focus paths now use that byte count. Only the checked
+words in `LONG_NAME_INSTRUCTIONS` and the two key tables are changed in the ELF.
+The preview uses the native ASCII font, a smaller size and no six-slot underlines.
+`ENTRY5.SPD` replaces the surname and given-name prompts within the first 72 rows
+of its 456×496 atlas. Other prompts and sprite records stay intact.
+
+On 2026-11-26 an isolated PCSX2 test of the retail build accepted 12 characters
+in each field and rendered both names together. The subsequent smaller preview
+and parchment cleanup address the clipping and background observed in that run.

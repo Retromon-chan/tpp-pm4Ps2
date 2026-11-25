@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.0 (2026-11-26)
+
+- Added a 12-character English name option in Inject. The surname and given name use half-width letters, and the keyboard parchment has been cleaned up.
+
 ## 0.4.1 (2026-11-26)
 
 - Fixed injection and PNG export for projects with empty image translation rows, including sheets edited in Krita.

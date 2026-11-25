@@ -53,9 +53,11 @@ Image changes require a verified PNG → SPD → ISO → PNG round trip, unchang
 sprite metadata/ISO extents, and preserved PS2 alpha. Generic Image Translator
 injection temporarily hides image files: use imageTranslatorFiles and mark
 imageTranslatorHandled after packing them. Never ship loose PNGs as if injected.
-The English keyboard is explicit opt-in on Inject. Preserve two-byte input slots,
-row terminators, executable instructions and all bytes outside the two table
-regions. Patch both page images and tables together, regardless of selected files.
+The English keyboard is explicit opt-in on Inject. Preserve two-byte input slots
+and row terminators. The full-width mode changes only the two tables in the
+executable. The long-name mode also changes the guarded name-entry instructions
+on the verified retail ELF and requires both name prompts. Patch all resources
+for the selected mode together, regardless of selected files.
 
 ## Repository and releases
 

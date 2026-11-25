@@ -82,13 +82,15 @@ the two kana pages with **ABC / abc**, digits and punctuation. It is off by
 default. The patch changes both the pictures and the native input tables in the
 exported ISO, so the keys enter the characters shown on screen.
 
-Names use the game's existing two-byte, full-width Latin characters. The normal
-name-length limit remains. This changes the on-screen controller keyboard;
-it does not add direct typing from a PC keyboard.
+**Allow 12 half-width characters per name field** enables the English keyboard
+and supports up to 12 ASCII characters in both the surname and given name. The
+standard English keyboard supports six full-width characters per field. Use the
+on-screen controller keyboard to enter names.
 
 The switch applies to the whole output disc even when only some project files
 are selected. It replaces lettering in the key and bottom-button areas of
-`ENTRY2A.SPD` and `ENTRY2B.SPD`, including edits in those areas; other image edits
+`ENTRY2A.SPD` and `ENTRY2B.SPD`, including edits in those areas. The 12-character
+option also replaces the two name prompts in `ENTRY5.SPD`. Other image edits
 are retained. Turn it off to keep your own name-entry artwork and original kana
 input. Each Inject starts with the switch off, and the original ISO is unchanged.
 
