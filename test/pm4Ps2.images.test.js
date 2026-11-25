@@ -99,8 +99,10 @@ test("adding all artwork preserves interface edits and exports a text-free CG re
         await addon.finalizeTransData({project: refreshed}, null, refreshed.options);
         assert.deepEqual(Object.keys(refreshed.files).sort(), [cgId, interfaceId]);
 
-        // Export the unedited CG to PNG, then import an edited copy and patch the ISO.
-        interfaceFile.data = [];
+        // The grid can leave empty row objects on image sheets saved without OCR text.
+        interfaceFile.data = [{}, null, ["Source only", ""]];
+        const cg = project.files[cgId];
+        cg.data = [{}];
         const exported = path.join(root, "pngs");
         assert.equal((await addon.exportEditableImages(exported)).length, 2);
         const image = codec.decodePng(await fs.readFile(path.join(exported, "EV01.png")));
@@ -109,8 +111,10 @@ test("adding all artwork preserves interface edits and exports a text-free CG re
         await fs.mkdir(edited);
         await fs.writeFile(path.join(edited, "EV01.png"), codec.encodePng(image));
         assert.deepEqual(await addon.importEditedImages(edited), [cgId]);
-        const options = {files: [cgId], translationDatas: {}};
-        const [outputPath] = await addon.exportToFolder(root, {project}, options);
+        // Inject supplies images separately after temporarily hiding them from project.files.
+        const imageTranslatorFiles = {[interfaceId]: interfaceFile, [cgId]: cg};
+        const options = {files: [interfaceId, cgId], translationDatas: {}, imageTranslatorFiles};
+        const [outputPath] = await addon.exportToFolder(root, {project: {...project, files: {}}}, options);
         assert.equal(options.imageTranslatorHandled, true);
         const output = await fs.readFile(outputPath), record = init.sourceManifest.imageResources.find(r => r.name === "EV01.SPD");
         assert.deepEqual(codec.decodeSpd(output.subarray(record.offset, record.offset + record.size)), image);

@@ -33,7 +33,9 @@ module.exports = function install(addon, {trans, ui, common, addonLoader, OcrEng
     function imageEntries(data, options = {}) {
         return Object.entries({...data.project.files, ...options.imageTranslatorFiles}).filter(([, f]) => f.type === "image" && f.pm4Image);
     }
-    function hasText(file) { return file.layerVisibility?.texts !== false && file.data?.some(row => row?.slice(1).some(Boolean)); }
+    function hasText(file) {
+        return file.layerVisibility?.texts !== false && file.data?.some(row => Array.isArray(row) && row.slice(1).some(Boolean));
+    }
     function hasEdits(file) {
         return hasText(file) || file.layerVisibility?.original === false ||
             ["inpaint", "krita", "aiInpaint", "burnIn"].some(name => file[name + "Layer"]?.imageStagingPath && file.layerVisibility?.[name] !== false);

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.1 (2026-11-26)
+
+- Fixed injection and PNG export for projects with empty image translation rows, including sheets edited in Krita.
+
 ## 0.4.0 (2026-11-26)
 
 - Load all 1,263 game artwork sheets, including CGs without text, in a new project or from the Tools menu. Edit them in Krita or export and re-import PNGs to create a patched ISO.
