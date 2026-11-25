@@ -1,0 +1,33 @@
+{
+  "name": "pm4Ps2",
+  "title": "Princess Maker 4 (PS2) Parser",
+  "description": "Translate Japanese PS2 Princess Maker 4 text and interface images, with an optional English name-entry keyboard, and export a separate patched ISO.",
+  "main": "pm4Ps2.js",
+  "homepage": "https://github.com/pismax",
+  "version": "0.3.0",
+  "icon": "icon.png",
+  "author": {
+    "name": "pismax"
+  },
+  "autoload": false,
+  "load": [
+    "pm4Ps2.js"
+  ],
+  "minimumVersion": "8.10.29",
+  "compile": {
+    "modules": [
+      "pm4Ps2.module.js",
+      "pm4Ps2.images.js",
+      "pm4Ps2.keyboard.js",
+      "pm4Ps2.image-ui.js"
+    ]
+  },
+  "exclude": [
+    "src/**",
+    "test/**",
+    "plan/**",
+    "AGENTS.md",
+    "README.md",
+    "pm4Ps2.worker.js"
+  ]
+}
