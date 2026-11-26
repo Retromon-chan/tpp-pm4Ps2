@@ -9,6 +9,15 @@ const keyboard = require("./pm4Ps2.keyboard.js");
 const SECTOR = 2048;
 const MAIN_FILES = ["ROOM.G2", "PRIME4.G2", "ITEM_NAM.TXT", "ITEM_MSG.TXT"];
 const TEST_FILES = ["TEST.G2", "DEVTEST.G2"];
+const EXECUTABLE = "SLPM_659.36";
+// Verified CP932 NUL-terminated strings in the original Japanese ELF.
+const BIRTHDAY_FORMAT = 0x18c160;
+const NATIVE_TEXT_OFFSETS = [
+    0x18c140, BIRTHDAY_FORMAT, 0x18c560, 0x18c5c0, 0x18c630, 0x18c6b0, 0x18c740,
+    0x18c780, 0x18c840, 0x18c900, 0x18c990, 0x18c9d0, 0x18ca60, 0x18ca80, 0x18cb10,
+    0x18cba0, 0x18cc60, 0x18cc80, 0x18cca0, 0x18cd30, 0x18cd60, 0x18cdd0, 0x18ce40,
+    0x18cec0, 0x18cef0, 0x18cf40, 0x18cfd0, 0x18d0b0, 0x18d110, 0x18d190, 0x18d1f0
+];
 const hash = data => crypto.createHash("sha256").update(data).digest("hex");
 const normalize = text => text.replace(/\r\n?/g, "\n");
 const display = text => normalize(text).replace(/\\n/g, "\n");
@@ -34,6 +43,18 @@ function strictEncode(text) {
 function strictDecode(bytes) {
     const text = iconv.decode(bytes, "cp932");
     check(!text.includes("\ufffd"), "Invalid CP932 text in PM4 resource."); return text;
+}
+function readNativeText(buffer) {
+    check(keyboard.isOriginalExecutable(buffer), "Native UI text requires the original " + EXECUTABLE + " executable.");
+    return {strings: NATIVE_TEXT_OFFSETS.map(offset => {
+        const end = buffer.indexOf(0, offset), byteLength = end - offset;
+        const text = strictDecode(buffer.subarray(offset, end));
+        const kind = offset === BIRTHDAY_FORMAT ? "nativeDate" : "nativeDialog";
+        const rowInfoText = kind === "nativeDate" ? "Birthday format for the daughter and father" :
+            offset === NATIVE_TEXT_OFFSETS[0] ? "Return to title confirmation" : "Memory card, save, and load";
+        return {offset, byteLength, text, kind, maxBytes: byteLength, rowInfoText,
+            context: [EXECUTABLE, kind, "0x" + offset.toString(16)]};
+    })};
 }
 // Operand widths follow the SLPM_659.36 interpreter dispatch at 0x1791A0 and
 // were checked against all four scripts. Parsing must consume the complete file,
@@ -262,6 +283,7 @@ function readItems(b) {
 // speaker plates and choices; item names share the item list's slot pool.
 const BYTE_LIMITS = {dialogue: 180, description: 180, short: 24, itemName: 18, longMessage: 960};
 function byteLimit(kind, byteLength, lines = 1) {
+    if (kind === "nativeDate" || kind === "nativeDialog") return byteLength;
     if (kind === "dialogue" || kind === "description") {
         return lines <= 3 ? Math.max(byteLength, BYTE_LIMITS[kind])
             : Math.max(byteLength, Math.min(BYTE_LIMITS.longMessage, Math.max(byteLength * 2, BYTE_LIMITS[kind])));
@@ -279,6 +301,12 @@ const LINE_WIDTH = 34;
 // Per-occurrence parameters for Translator++: the byte limit, and for wrappable
 // text a width guideline. Used by import and by project upgrades.
 function occurrenceLimits(kind, byteLength, source) {
+    if (kind === "nativeDate" || kind === "nativeDialog") {
+        const lines = source.split("\n").length;
+        return {maxBytes: byteLength, textKind: kind, rowInfoNote: "CP932 limit: " + byteLength + " bytes. " +
+            (kind === "nativeDate" ? "Keep three decimal placeholders in year/month/day order." :
+                "Keep the text within " + lines + (lines === 1 ? " line." : " lines."))};
+    }
     const maxBytes = byteLimit(kind, byteLength, source.split("\n").length);
     const wrappable = kind === "dialogue" || kind === "description";
     return {maxBytes, textKind: kind,
@@ -293,6 +321,7 @@ function textKind(name, token) {
     return token.opcode === 1 ? "dialogue" : "short";
 }
 function readResource(b, name) {
+    if (name === EXECUTABLE) return readNativeText(b);
     const result = /\.G2$/i.test(name) ? readG2(b, true) : readItems(b);
     for (const token of result.strings) {
         token.kind = textKind(name, token);
@@ -446,6 +475,32 @@ function lookup(token, options) {
     return token.parts ? token.parts.map(part => part.marker || lookup(part.token, options)).join("") : token.text;
 }
 function codes(text) { return text.match(/%[-+0 #]*\d*(?:\.\d+)?[diuoxXfFeEgGcs%]|\\[^n]/g) || []; }
+function nativeTextChanges(buffer, options) {
+    const changes = new Map(), issues = [];
+    readNativeText(buffer).strings.forEach((token, row) => {
+        const target = normalize(lookup(token, options));
+        if (target === token.text) return;
+        const context = token.context.join("/");
+        try {
+            check(!/[\x00-\x09\x0b-\x1f\x7f]/.test(target), "remove control characters");
+            check(target.split("\n").length <= token.text.split("\n").length, "keep within the original number of lines");
+            if (token.kind === "nativeDate") {
+                const fields = target.match(/%0?[1-4]?d/g) || [];
+                check(fields.length === 3 && !target.replace(/%0?[1-4]?d/g, "").includes("%"),
+                    "keep exactly three decimal placeholders in year/month/day order");
+            }
+            const bytes = strictEncode(target);
+            check(bytes.length <= token.byteLength, "uses " + bytes.length + " CP932 bytes; maximum is " + token.byteLength);
+            const slot = Buffer.alloc(token.byteLength + 1);
+            bytes.copy(slot);
+            changes.set(token.offset, slot);
+        } catch (error) {
+            issues.push({file: EXECUTABLE, row, source: token.text, target, budget: token.byteLength,
+                context, contexts: [context], message: error.message});
+        }
+    });
+    return {changes, issues, warnings: [], pagedMessages: 0};
+}
 // Returns changes keyed by the string's byte offset (G2) or line number (items).
 // Only problems that break the export or the game block it: characters CP932
 // cannot store, changed % codes, and text over HARD_BYTE_LIMIT (the ~1 KB
@@ -456,6 +511,7 @@ function codes(text) { return text.match(/%[-+0 #]*\d*(?:\.\d+)?[diuoxXfFeEgGcs%
 const HARD_BYTE_LIMIT = 960;
 const CONTROL_CHARACTERS = /[\x00-\x08\x0b\x0c\x0e-\x1f]/g;
 function resourceChanges(b, name, options = {}) {
+    if (name === EXECUTABLE) return nativeTextChanges(b, options);
     const changes = new Map(), insertions = new Map(), issues = [], warnings = [], rows = new Map(), unique = new Map();
     function report(list, token, row, target, bytes, message) {
         const key = JSON.stringify([list === issues, row, target, message]), existing = unique.get(key);
@@ -527,6 +583,11 @@ function rebuildResource(b, name, options = {}) {
     const {changes, insertions, issues, warnings} = resourceChanges(b, name, options);
     if (Array.isArray(options.warnings)) options.warnings.push(...warnings);
     if (issues.length) throw translationError(issues);
+    if (name === EXECUTABLE) {
+        const output = Buffer.from(b);
+        for (const [offset, slot] of changes) slot.copy(output, offset);
+        return output;
+    }
     let output;
     if (/\.G2$/i.test(name)) {
         const constants = options.expandTextWindows ? textWindowConstants(b) : new Map();
@@ -654,6 +715,11 @@ async function inspectIso(isoPath, options = {}) {
             const b = await readAt(handle, record.offset, record.size, stat.size); readResource(b, name);
             resources.push({...record, sha256: hash(b)});
         }
+        const executable = outer.find(f => f.name === EXECUTABLE);
+        if (options.includeExecutableText !== false && executable) {
+            const b = await readAt(handle, executable.offset, executable.size, stat.size);
+            if (keyboard.isOriginalExecutable(b)) resources.push({...executable, sha256: hash(b)});
+        }
         const manifest = {format: 1, serial: "SLPM_659.36", isoSize: stat.size, resources};
         if (options.includeImages || options.includeAllImages) {
             if (options.includeAllImages) manifest.includeAllImages = true;
@@ -667,10 +733,10 @@ async function inspectIso(isoPath, options = {}) {
         if (options.includeKeyboard) {
             manifest.keyboardResources = [];
             for (const name of keyboard.resources(options.includeLongNames)) {
-                const record = (name === "SLPM_659.36" ? outer : inner).find(r => r.name === name);
+                const record = (name === EXECUTABLE ? outer : inner).find(r => r.name === name);
                 check(record, "English keyboard resource is missing: " + name);
                 const b = await readAt(handle, record.offset, record.size, stat.size);
-                if (name === "SLPM_659.36") keyboard.inspectExecutable(b, options.includeLongNames);
+                if (name === EXECUTABLE) keyboard.inspectExecutable(b, options.includeLongNames);
                 else {
                     const image = imageCodec.parseSpd(b);
                     const [width, height] = name === keyboard.NAME_PROMPT ? [456, 496] : [640, 448];
@@ -729,6 +795,7 @@ async function exportIso(sourcePath, destinationPath, options = {}) {
     check(path.resolve(sourcePath).toLowerCase() !== path.resolve(destinationPath).toLowerCase(), "Cannot overwrite the source ISO.");
     const longNames = keyboard.usesLongNames(options);
     const actual = await inspectIso(sourcePath, {includeTestScripts: expected.resources.some(f => TEST_FILES.includes(f.name)),
+        includeExecutableText: expected.resources.some(f => f.name === EXECUTABLE),
         includeImages: Boolean(expected.imageResources), includeAllImages: expected.includeAllImages === true,
         includeKeyboard: keyboard.isEnabled(options), includeLongNames: longNames});
     check(JSON.stringify(actual.resources) === JSON.stringify(expected.resources) && actual.isoSize === expected.isoSize, "The source ISO no longer matches this project.");
@@ -742,7 +809,7 @@ async function exportIso(sourcePath, destinationPath, options = {}) {
             const original = await readAt(handle, record.offset, record.size, expected.isoSize);
             try {
                 const output = rebuildResource(original, record.name, {...selected, warnings});
-                if (!output.equals(original)) patches.push({record, output, resizable: true});
+                if (!output.equals(original)) patches.push({record, output, resizable: record.name !== EXECUTABLE});
             } catch (error) {
                 if (error.name !== "PM4TranslationError") throw error;
                 issues.push(...error.issues);
@@ -750,7 +817,7 @@ async function exportIso(sourcePath, destinationPath, options = {}) {
         }
         // Translated text needs larger text-window render pools. Both game scripts
         // run the same window setup, so patch both whenever any text changed.
-        if (!issues.length && patches.length && options.expandTextWindows !== false) {
+        if (!issues.length && patches.some(p => p.resizable) && options.expandTextWindows !== false) {
             for (const record of expected.resources.filter(r => r.name === "ROOM.G2" || r.name === "PRIME4.G2")) {
                 const original = await readAt(handle, record.offset, record.size, expected.isoSize);
                 const output = rebuildResource(original, record.name, {...(options.translations?.[record.name] || {}), expandTextWindows: true});
@@ -775,7 +842,7 @@ async function exportIso(sourcePath, destinationPath, options = {}) {
             const existing = patches.find(p => p.record.name === record.name);
             const current = existing?.output || original;
             let output;
-            if (record.name === "SLPM_659.36") output = keyboard.patchExecutable(original, longNames);
+            if (record.name === EXECUTABLE) output = keyboard.patchExecutable(original, longNames, current);
             else if (record.name === keyboard.NAME_PROMPT) output = keyboard.patchNamePrompts(current);
             else output = keyboard.patchKeyboardSheet(original, current, record.name === "ENTRY2A.SPD" ? 0 : 1);
             if (existing) existing.output = output;

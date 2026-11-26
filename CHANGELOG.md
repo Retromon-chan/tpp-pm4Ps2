@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.1 (2026-11-26)
+
+- Added editable memory-card, save and load prompts, the return-to-title confirmation, and the date format shared by both birthdays. Use Update Project from Source to add `SLPM_659.36` to an existing project.
+
 ## 0.6.0 (2026-11-26)
 
 - Dialogue interrupted by a player name or another directly printed string variable now appears as one row. Keep the inline codes (for example `{{daughter}}` and `{{father}}`) when translating. Update Project from Source combines existing fragment translations. Export and Inject restore the game's runtime variable commands.

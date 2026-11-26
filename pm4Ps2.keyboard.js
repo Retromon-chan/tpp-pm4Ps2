@@ -25,6 +25,9 @@ const LONG_NAME_INSTRUCTIONS = [
     [0x1ed39c, 0x38a50001, 0x0000282d], [0x1ec97c, 0x2405001e, 0x24050018]
 ];
 function check(ok, message) { if (!ok) throw new Error(message); }
+function isOriginalExecutable(buffer) {
+    return crypto.createHash("sha256").update(buffer).digest("hex") === ORIGINAL_ELF;
+}
 function nativeLetter(letter) {
     if (!letter) return "　";
     if (letter === "'") return "’";
@@ -53,7 +56,7 @@ function inspectExecutable(buffer, longNames = false) {
         check(buffer.includes(iconv.encode(text, "cp932")), "Expected Latin character map is missing from the PS2 executable.");
     }
     if (longNames) {
-        check(crypto.createHash("sha256").update(buffer).digest("hex") === ORIGINAL_ELF,
+        check(isOriginalExecutable(buffer),
             "12-character names require the original SLPM_659.36 executable.");
         for (const [address, original] of LONG_NAME_INSTRUCTIONS) {
             check(buffer.readUInt32LE(address - ELF_ADDRESS_BASE) === original, "Unexpected name-entry instruction at 0x" + address.toString(16) + ".");
@@ -61,8 +64,8 @@ function inspectExecutable(buffer, longNames = false) {
     }
     return {tables};
 }
-function patchExecutable(buffer, longNames = false) {
-    const {tables} = inspectExecutable(buffer, longNames), output = Buffer.from(buffer);
+function patchExecutable(buffer, longNames = false, current = buffer) {
+    const {tables} = inspectExecutable(buffer, longNames), output = Buffer.from(current);
     for (let page = 0; page < 2; page++) tableBytes(PAGES[page], true).copy(output, tables[page].offset);
     if (longNames) {
         for (const [page, rows] of PAGES.entries()) {
@@ -162,5 +165,5 @@ function injectOptionFields() {
             {key: "pm4LongEnglishNames", fieldHtmlClass: "flipSwitch", inlinetitle: "Allow 12 half-width characters per name field"}]
     };
 }
-module.exports = {HIRAGANA, KATAKANA, PAGES, RESOURCES, NAME_PROMPT, nativeLetter, tableBytes, inspectExecutable, patchExecutable,
+module.exports = {HIRAGANA, KATAKANA, PAGES, RESOURCES, NAME_PROMPT, nativeLetter, tableBytes, inspectExecutable, isOriginalExecutable, patchExecutable,
     patchKeyboardSheet, patchNamePrompts, resources, isEnabled, usesLongNames, injectOptionFields};

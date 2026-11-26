@@ -77,7 +77,7 @@ thisAddon.updateProject = async function(...args) {
 
 function resourcePath(root, fileId) {
     const name = fileId.replace(/^[\\/]+/, "");
-    if (!/^(ROOM\.G2|PRIME4\.G2|ITEM_NAM\.TXT|ITEM_MSG\.TXT|TEST\.G2|DEVTEST\.G2)$/.test(name)) throw new Error("Invalid PM4 resource: " + fileId);
+    if (!/^(ROOM\.G2|PRIME4\.G2|ITEM_NAM\.TXT|ITEM_MSG\.TXT|TEST\.G2|DEVTEST\.G2|SLPM_659\.36)$/.test(name)) throw new Error("Invalid PM4 resource: " + fileId);
     return nwPath.join(root, name);
 }
 thisAddon.prepareNewProject = async function(info = {}) {
@@ -106,7 +106,10 @@ thisAddon.writeFile = async function(file, basePath, targetDir, options = {}) {
     const selected = thisAddon.selectTranslationData(options.translationDatas, file);
     return parser.writeFile(resourcePath(basePath, file), resourcePath(targetDir, file), selected);
 };
-thisAddon.setFileFormatName = async file => /\.G2$/i.test(file) ? "PM4 PS2 G2CD0460 bytecode (CP932)" : "PM4 PS2 item list (CP932)";
+thisAddon.setFileFormatName = async file => {
+    if (/SLPM_659\.36$/.test(file)) return "PM4 PS2 system messages (CP932)";
+    return /\.G2$/i.test(file) ? "PM4 PS2 G2CD0460 bytecode (CP932)" : "PM4 PS2 item list (CP932)";
+};
 thisAddon.setProjectLocation = async (_data, _base, options) => nwPath.dirname(options.init.entryPoint);
 thisAddon.finalizeTransData = async function(data) {
     data.project.options.sl = "ja";
@@ -169,7 +172,7 @@ thisAddon.handleExport = async function(targetPath, options = {}) {
 };
 
 thisAddon.registerProjectWizard = function() {
-    const $slide = $("<div><h2>Princess Maker 4 (PS2)</h2><p>Open the Japanese PS2 ISO (SLPM_659.36). Import dialogue, choices, item text, and editable artwork. Export or Inject creates a separate patched ISO.</p><p>Keep % codes and inline variables such as {{daughter}}. Rewrap dialogue to fit the message box. Image sheets keep their original dimensions.</p><div class='parserFields'></div></div>");
+    const $slide = $("<div><h2>Princess Maker 4 (PS2)</h2><p>Open the Japanese PS2 ISO (SLPM_659.36). Import dialogue, choices, item text, system messages, and editable artwork. Export or Inject creates a separate patched ISO.</p><p>Keep % codes and inline variables such as {{daughter}}. Rewrap dialogue to fit the message box. Image sheets keep their original dimensions.</p><div class='parserFields'></div></div>");
     ui.newProjectDialog.addMenu({
         icon: thisAddon.getWebLocation() + "/" + thisAddon.package.icon, descriptionBar: "<h2>Princess Maker 4 (PS2)</h2>", actionBar: "",
         goToSlide: thisAddon.package.name, at: 8,

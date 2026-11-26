@@ -29,6 +29,21 @@ Offsets are observations, never hardcoded patch destinations. Directory parsing
 checks both endian copies, range limits, nesting, and unsupported multi-extent
 or interleaved files. Only this serial and the unencrypted CVM layout are accepted.
 
+## Executable UI text
+
+The original outer `SLPM_659.36` ELF has a return-to-title prompt at file
+offset `0x18c140`, a birthday format at `0x18c160`, and 29 CP932 memory-card
+prompts from `0x18c560` to `0x18d1f0`. Both birthday fields pass the same
+format to the formatter from code at `0x1eca30` and `0x1ecb1c`.
+
+Import these strings only when the ELF matches the retail SHA-256 used by the
+keyboard patch. Keep each string at its original offset and within its original
+byte length plus terminator. The three decimal conversions must stay in
+year/month/day order. Dialogues keep their original maximum line count and use
+literal LF. The fixed-size ELF patch can be combined with either English keyboard
+mode. A project saved before these rows were supported can still export from
+its original manifest.
+
 ## G2CD0460
 
 Header layout, as read by the ELF loader at 0x17FB40 (not inferred from the files):

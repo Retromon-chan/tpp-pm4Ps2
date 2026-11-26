@@ -5,7 +5,8 @@ export a separate disc image. The original ISO is read-only.
 
 1. Choose **New Project → Princess Maker 4 (PS2)** and select the `.iso`.
 2. Edit `ROOM.G2` (story and choices), `PRIME4.G2` (startup/system messages),
-   `ITEM_NAM.TXT`, and `ITEM_MSG.TXT`. The original language is Japanese; the
+   the item lists, and `SLPM_659.36` (memory-card, save and load prompts,
+   return to title, and birthdays). The original language is Japanese. The
    initial target is English and can be changed in Translator++.
 3. Save the `.trans` project normally. Keep the original ISO at its selected
    location: it is required for export and project updates.
@@ -18,6 +19,12 @@ Only checked/selected resources and the normal Translator++ row/tag filters are
 translated during text export. Image export follows the selected image files and
 their visible layers. Every other disc byte is copied from the original.
 The normal rightmost nonempty translation and context overrides are supported.
+
+Use **Update Project from Source** to add `SLPM_659.36` to an existing
+project. These rows must fit the CP932 byte limit and original line count
+shown in the row notes. The shared birthday format must keep three decimal
+placeholders in year, month, day order. For example, `%d-%02d-%02d` produces
+`1430-04-13`.
 
 New projects include an **Actor Reference** with editable name translations,
 pronouns, and short speech notes. AI translation can use the reference to
