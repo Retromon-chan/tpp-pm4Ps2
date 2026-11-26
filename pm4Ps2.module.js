@@ -31,23 +31,55 @@ function strictDecode(bytes) {
 const WORD_OPS = new Set([3, 5, 7, 8, 9, 10, 0x13, 0x14, 0x20, 0x21, 0x40, 0x41, 0x42, 0x44, 0x45, 0x51, 0x53]);
 const SINGLE_OPS = new Set([4, 6, 0x0d, 0x0e, 0x11, 0x16, 0x1b, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87, 0x89, 0x8b, 0x8c, 0x8d, 0x8e, 0x91, 0x92, 0x93, 0x94, 0x95, 0x96, 0x9a, 0x9c, 0x9e, 0x9f, 0xa3, 0xa4, 0xf0]);
 const CODE_PREFIX = Buffer.from("1b20010000002002000000", "hex");
-// Conservative name-state analysis. 2100(1, literal) sets the name plate;
-// 2100(0) clears it; variable 2/3 are the player-named daughter/father. Their
-// roles are known, but the actual save-dependent names are not. Only
-// the observed voice command 1620 is allowed to preserve names across native
-// calls. Script calls, other native calls, and disagreeing branch paths lose
-// the known name rather than attributing dialogue to a nearby character.
-function assignSpeakers(events, entries) {
-    const UNKNOWN = null, runtimeStates = new Map(), incoming = new Array(events.length);
-    function runtimeState(variableId) {
-        if (!runtimeStates.has(variableId)) runtimeStates.set(variableId, {variableId});
-        return runtimeStates.get(variableId);
+// Page advance, sprite show/hide, voice playback, and the string operations
+// used to build sprite paths leave the active name plate alone.
+const NAME_PRESERVING_NATIVE_CALLS = new Set([0x1105, 0x1501, 0x1502, 0x1620, 0x1801, 0x1803, 0x1804, 0x1805, 0x1809]);
+
+function findNameChangingPaths(events) {
+    const predecessors = Array.from(events, () => []);
+    const mayChangeName = new Uint8Array(events.length);
+    const queue = [];
+    for (let index = 0; index < events.length; index++) {
+        const event = events[index];
+        if (event.type === "return") continue;
+        if (event.next !== undefined && event.next < events.length) predecessors[event.next].push(index);
+        if (event.targetIndex !== undefined && event.targetIndex < events.length) predecessors[event.targetIndex].push(index);
+        if (event.type === "name" || event.type === "unknown" || event.next === events.length || event.targetIndex === events.length) {
+            mayChangeName[index] = 1;
+            queue.push(index);
+        }
     }
+    // A script call preserves the name only if neither the callee nor a
+    // nested callee can reach a name command or an unverified operation.
+    for (let head = 0; head < queue.length; head++) {
+        for (const index of predecessors[queue[head]]) {
+            if (mayChangeName[index]) continue;
+            mayChangeName[index] = 1;
+            queue.push(index);
+        }
+    }
+    return mayChangeName;
+}
+
+function assignSpeakers(events, entries, boundaries, codeBase) {
+    const UNKNOWN = null, runtimeStates = new Map(), incoming = new Array(events.length);
     const queue = [];
     function locate(offset) {
         let lo = 0, hi = events.length;
         while (lo < hi) { const mid = (lo + hi) >>> 1; if (events[mid].offset < offset) lo = mid + 1; else hi = mid; }
         return lo;
+    }
+    for (let index = 0; index < events.length; index++) {
+        const event = events[index];
+        if (event.type !== "return" && !event.unconditional) event.next = index + 1;
+        if (event.target !== undefined) {
+            event.targetIndex = boundaries.has(event.target - codeBase) ? locate(event.target) : events.length;
+        }
+    }
+    const mayChangeName = findNameChangingPaths(events);
+    function runtimeState(variableId) {
+        if (!runtimeStates.has(variableId)) runtimeStates.set(variableId, {variableId});
+        return runtimeStates.get(variableId);
     }
     function merge(index, value) {
         if (index >= events.length) return;
@@ -55,17 +87,14 @@ function assignSpeakers(events, entries) {
         const after = before === undefined ? value : before === value ? before : UNKNOWN;
         if (before !== after) { incoming[index] = after; queue.push(index); }
     }
-    for (const offset of entries) merge(locate(offset), UNKNOWN);
-    for (const event of events) if (event.type === "call") merge(locate(event.target), UNKNOWN);
+    for (const offset of entries) if (boundaries.has(offset - codeBase)) merge(locate(offset), UNKNOWN);
+    for (const event of events) if (event.targetIndex !== undefined && event.type !== "branch") merge(event.targetIndex, UNKNOWN);
     for (let head = 0; head < queue.length; head++) {
         const index = queue[head], event = events[index]; let state = incoming[index];
         if (event.type === "name") state = event.kind === "literal" ? event.name : event.kind === "none" ? "" : runtimeState(event.variableId);
-        else if (event.type === "call" || event.type === "unknown") state = UNKNOWN;
-        if (event.type === "return") continue;
-        // Both edges even for jump 07: over-approximating possible paths can
-        // only remove a known name at joins, never invent one.
-        if (event.type === "branch") merge(locate(event.target), state);
-        merge(index + 1, state);
+        else if (event.type === "unknown" || (event.type === "call" && mayChangeName[event.targetIndex] !== 0)) state = UNKNOWN;
+        if (event.type === "branch") merge(event.targetIndex, state);
+        if (event.next !== undefined) merge(event.next, state);
     }
     for (let index = 0; index < events.length; index++) {
         const event = events[index]; if (event.type !== "dialogue") continue;
@@ -120,11 +149,14 @@ function readG2(b) {
                     const cleared = arguments_.length === 1 && mode?.opcode === 3 && mode.value === 0;
                     const variableId = arguments_.length === 2 && mode?.opcode === 3 && mode.value === 1 && name?.opcode === 0x42 ? name.value : undefined;
                     events.push({offset, type: "name", kind: literal ? "literal" : cleared ? "none" : "runtime", name: literal ? name.value : "", variableId});
-                } else if (value !== 0x1620) events.push({offset, type: "unknown"});
+                } else if (!NAME_PRESERVING_NATIVE_CALLS.has(value)) events.push({offset, type: "unknown"});
                 arguments_ = [];
             } else {
-                if ([7, 8, 9].includes(opcode)) events.push({offset, type: "branch", target: codeStart + 1 + value});
-                else if (opcode === 0x0a || opcode === 0x13) events.push({offset, type: "call", target: codeStart + 1 + value});
+                if (opcode === 7 || opcode === 8 || opcode === 9) {
+                    events.push({offset, type: "branch", target: codeStart + 1 + value, unconditional: opcode === 7});
+                } else if (opcode === 0x0a || opcode === 0x13) {
+                    events.push({offset, type: opcode === 0x0a ? "call" : "unknown", target: codeStart + 1 + value});
+                }
                 arguments_.push({opcode, value});
             }
         } else {
@@ -141,7 +173,8 @@ function readG2(b) {
     // Symbol bytes remain untouched; jump targets, statements, and the VM itself
     // are validated strictly. Do not reject this original retail resource.
     for (const offset of symbols) check(offset >= 0 && offset < b.length - codeStart, "G2 symbol target is outside the bytecode.");
-    assignSpeakers(events, [codeStart + 1, ...symbols.map(offset => codeStart + 1 + offset)]);
+    const codeBase = codeStart + 1;
+    assignSpeakers(events, [codeBase, ...symbols.map(offset => codeBase + offset)], boundaries, codeBase);
     return {strings, codeStart, statementCount, symbolCount, unresolvedSymbols: symbols.filter(offset => !boundaries.has(offset))};
 }
 function readItems(b) {

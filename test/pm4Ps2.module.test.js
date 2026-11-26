@@ -62,6 +62,19 @@ test("speaker commands persist across statements and voice calls; runtime roles 
     const dataset = parser.dataset(b, "ROOM.G2"), row = dataset.indexIds["最初の台詞"];
     assert.equal(dataset.parameters[row][0].speakerSource, "pm4-name-command");
 });
+test("page advances and nested portrait helpers keep the speaker until a reachable name change", () => {
+    const b = speakerG2(), strings = parser.readG2(b).strings;
+    for (const text of ["立ち絵の前", "立ち絵の後", "同じ話者の続き"]) {
+        const token = strings.find(t => t.text === text);
+        assert.equal(token.rowInfoText, "Daughter (custom name)");
+        assert.equal(token.speakerKind, "runtime");
+        assert.equal(token.speakerVariable, 2);
+    }
+    const after = strings.find(t => t.text === "名前が消える可能性");
+    assert.equal(after.rowInfoText, "");
+    assert.equal(after.speakerKind, "unknown");
+    assert.deepEqual(parser.rebuildResource(b, "ROOM.G2"), b);
+});
 test("context overrides, group fallbacks, missing translations, exact byte preservation", () => {
     const b = g2(), tokens = parser.readG2(b).strings, yes = tokens.filter(t => t.text === "はい");
     const pair = {"はい": "Yes", [yes[1].context.join("/") + "\nはい"]: "No"};

@@ -53,10 +53,11 @@ function speakerG2() {
     function add(...bytes) { for (const b of bytes) { chunks.push(b); length += b.length; } }
     function stmt(...bytes) { add(op(0x21, ++statement), ...bytes); }
     function name(text) { stmt(Buffer.from([6]), op(3, 1), str(2, text), op(5, 0x2100)); }
+    function jump(opcode, label) { fixups.push({offset: length + 1, label}); add(op(opcode, 0)); }
     name("アリス");
     stmt(Buffer.from([6]), str(2, "0001"), op(5, 0x1620), str(1, "最初の台詞"));
     stmt(str(2, "はい")); stmt(str(1, "続きの台詞"));
-    stmt(op(5, 0x1501), str(1, "不明な台詞"));
+    stmt(op(5, 99), str(1, "不明な台詞"));
     name("ボブ"); stmt(Buffer.from([6]), op(3, 1), op(0x42, 2), op(5, 0x2100));
     stmt(str(1, "名前は実行時"));
     stmt(Buffer.from([6]), op(3, 1), op(0x42, 3), op(5, 0x2100)); stmt(str(1, "父の台詞"));
@@ -64,11 +65,31 @@ function speakerG2() {
     stmt(Buffer.from([6]), op(3, 0), op(5, 0x2100)); stmt(str(1, "地の文"));
     name("アリス"); stmt(op(0x0a, 0), str(1, "呼出し後"));
     name("アリス"); stmt();
-    fixups.push({offset: length + 1, label: "join"}); add(op(8, 0));
+    jump(8, "join");
     name("ボブ"); labels.join = length; stmt(str(1, "分岐の合流"));
     name("アリス"); stmt();
-    fixups.push({offset: length + 1, label: "same"}); add(op(8, 0));
+    jump(8, "same");
     labels.same = length; stmt(str(1, "同じ名前の合流"));
+
+    stmt(Buffer.from([6]), op(3, 1), op(0x42, 2), op(5, 0x2100));
+    stmt(str(1, "立ち絵の前"), op(5, 0x1105)); jump(0x0a, "portrait");
+    stmt(str(1, "立ち絵の後"), op(5, 0x1105), op(5, 0x1502), str(1, "同じ話者の続き"));
+    jump(0x0a, "maybeClear");
+    stmt(str(1, "名前が消える可能性"), Buffer.from([0x0e]));
+
+    labels.portrait = length;
+    stmt(); jump(0x0a, "spritePath"); add(op(5, 0x1501), Buffer.from([0x0e]));
+    labels.spritePath = length;
+    stmt(); jump(7, "formatPath");
+    name("ボブ"); // Unreachable through the unconditional jump.
+    labels.formatPath = length;
+    stmt(op(5, 0x1809), Buffer.from([0x0e]));
+    labels.maybeClear = length;
+    stmt(); jump(8, "end"); jump(0x0a, "clear");
+    labels.end = length;
+    add(Buffer.from([0x0e]));
+    labels.clear = length;
+    stmt(Buffer.from([6]), op(3, 0), op(5, 0x2100), Buffer.from([0x0e]));
     const code = Buffer.concat(chunks);
     for (const f of fixups) code.writeUInt32LE(labels[f.label] - 1, f.offset);
     const header = Buffer.alloc(21); header.write("G2CD0460"); header[8] = 0x1b; header.writeUInt32LE(statement + 1, 9);

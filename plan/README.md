@@ -85,14 +85,20 @@ The Cube tutorial sets `キューブ` in statement 1482,
 then plays voice `7022` via `0x1620` and displays the status explanation in
 statement 1483. This matches the user's running-game screenshot.
 
-The parser records name commands and dialogue as control-flow events. It merges
-name state across branches, seeds function entries as unknown, and invalidates
-known names at script calls and native calls other than the observed voice call.
-Even unconditional jumps are over-approximated with both successor paths to
-avoid inventing a name through an omitted path. The metadata therefore has
-partial coverage: known player-name slots display role labels; other unresolved
-names and ambiguous/unverified paths remain blank. No name is inferred merely
-from a nearby Japanese string.
+The parser tracks the active name across page advances (`0x1105`), sprite
+show/hide (`0x1501`/`0x1502`), voice (`0x1620`), and string operations used to
+build sprite paths (`0x1801`, `0x1803`–`0x1805`, `0x1809`). In the retail
+ROOM.G2, one `0x2100` sets the daughter's name in statement 33516. The dialogue
+in statements 33517, 33520, 33523, 33526, and 33529 shares that name across
+page advances and calls to the portrait routines at code offsets `0xf02` and
+`0x7bd`. Those routines return without changing the name plate.
+
+The name analysis follows `0x07` directly to its target and merges both paths
+for `0x08` and `0x09`. It preserves the caller's name across a direct `0x0a`
+script call when every reachable operation in the callee and its nested
+calls is name-preserving. It seeds function entries as unknown. Explicit
+name commands, unverified operations inside callees, and disagreeing branch
+paths can leave the speaker unresolved.
 
 Each dialogue occurrence carries `speakerKind` (`literal`, `runtime`, `none`, or
 `unknown`) and `speakerSource: pm4-name-command`. Existing per-occurrence contexts

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.1 (2026-11-26)
+
+- Fixed missing speaker names on dialogue that continues across page advances and portrait changes, including lines spoken by the player-named daughter.
+
 ## 0.5.0 (2026-11-26)
 
 - Added a 12-character English name option in Inject. The surname and given name use half-width letters, and the keyboard parchment has been cleaned up.
