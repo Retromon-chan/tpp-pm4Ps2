@@ -8,6 +8,7 @@ const path = require("node:path");
 const os = require("node:os");
 const {g2, iso, speakerG2} = require("./fixtures.cjs");
 const parser = require("../pm4Ps2.module.js");
+const guidance = require("../pm4Ps2.guidance.js");
 
 test("business API imports in Node without Translator++ globals", () => {
     for (const name of ["pm4Ps2Project", "parseFile", "writeFile", "detectpm4Ps2"]) {
@@ -52,7 +53,7 @@ test("speaker commands persist across statements and voice calls; runtime roles 
     for (const text of ["不明な台詞", "呼出し後", "分岐の合流"]) {
         assert.equal(get(text).rowInfoText, ""); assert.equal(get(text).speakerKind, "unknown");
     }
-    assert.equal(get("名前は実行時").rowInfoText, "Daughter (custom name)"); assert.equal(get("名前は実行時").speakerKind, "runtime");
+    assert.equal(get("名前は実行時").rowInfoText, "Daughter"); assert.equal(get("名前は実行時").speakerKind, "runtime");
     assert.equal(get("名前は実行時").speakerVariable, 2);
     assert.equal(get("父の台詞").rowInfoText, "Father (custom name)"); assert.equal(get("父の台詞").speakerVariable, 3);
     assert.equal(get("未知の変数").rowInfoText, ""); assert.equal(get("未知の変数").speakerKind, "runtime");
@@ -66,7 +67,7 @@ test("page advances and nested portrait helpers keep the speaker until a reachab
     const b = speakerG2(), strings = parser.readG2(b).strings;
     for (const text of ["立ち絵の前", "立ち絵の後", "同じ話者の続き"]) {
         const token = strings.find(t => t.text === text);
-        assert.equal(token.rowInfoText, "Daughter (custom name)");
+        assert.equal(token.rowInfoText, "Daughter");
         assert.equal(token.speakerKind, "runtime");
         assert.equal(token.speakerVariable, 2);
     }
@@ -74,6 +75,29 @@ test("page advances and nested portrait helpers keep the speaker until a reachab
     assert.equal(after.rowInfoText, "");
     assert.equal(after.speakerKind, "unknown");
     assert.deepEqual(parser.rebuildResource(b, "ROOM.G2"), b);
+});
+test("project guidance adds an editable cast and upgrades only the generated daughter label", () => {
+    const room = parser.dataset(speakerG2(), "ROOM.G2");
+    const row = room.indexIds["名前は実行時"];
+    const speaker = room.parameters[row][0];
+    speaker.rowInfoText = "Daughter (custom name)";
+    room.parameters[row].push({rowInfoText: "Daughter (custom name)", rowInfoSource: "editor"});
+    const project = {gameEngine: "pm4Ps2", files: {"/ROOM.G2": room}};
+    assert.equal(guidance.applyProjectDefaults(project), true);
+    assert.equal(speaker.rowInfoText, "Daughter");
+    assert.equal(room.parameters[row][1].rowInfoText, "Daughter (custom name)");
+    assert.equal(room.translationConstraintType, "gameText");
+    const reference = project.files["Actor Reference"];
+    assert.equal(project.references["Actor Reference"], reference);
+    assert.equal(reference.actorTranslationColumn, 1);
+    assert.equal(reference.actorInfoColumn, 2);
+    const names = new Map(reference.data.map(cells => [cells[0], cells]));
+    assert.equal(names.size, reference.data.length);
+    assert.match(names.get("Daughter")[2], /female \(she\/her\)/);
+    assert.deepEqual(names.get("キューブ").slice(0, 2), ["キューブ", "Cube"]);
+    names.get("キューブ")[1] = "Cube (edited)";
+    assert.equal(guidance.applyProjectDefaults(project), false);
+    assert.equal(names.get("キューブ")[1], "Cube (edited)");
 });
 test("context overrides, group fallbacks, missing translations, exact byte preservation", () => {
     const b = g2(), tokens = parser.readG2(b).strings, yes = tokens.filter(t => t.text === "はい");

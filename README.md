@@ -19,6 +19,11 @@ translated during text export. Image export follows the selected image files and
 their visible layers. Every other disc byte is copied from the original.
 The normal rightmost nonempty translation and context overrides are supported.
 
+New projects include an **Actor Reference** with editable name translations,
+pronouns, and short speech notes. AI translation can use the reference to
+identify speakers, including **Daughter**. Find the game's tone and storage
+guidance under **Translator → Prompts**.
+
 ## Text constraints
 
 - Select a row to see its **maximum CP932 byte budget** in the grid toolbar.

@@ -100,7 +100,7 @@ function assignSpeakers(events, entries, boundaries, codeBase) {
         const event = events[index]; if (event.type !== "dialogue") continue;
         const state = incoming[index];
         const runtime = state && typeof state === "object";
-        const roles = {2: "Daughter (custom name)", 3: "Father (custom name)"};
+        const roles = {2: "Daughter", 3: "Father (custom name)"};
         event.token.rowInfoText = typeof state === "string" ? state : runtime ? roles[state.variableId] || "" : "";
         event.token.speakerKind = typeof state === "string" ? (state ? "literal" : "none") : runtime ? "runtime" : "unknown";
         if (runtime && Number.isInteger(state.variableId)) event.token.speakerVariable = state.variableId;

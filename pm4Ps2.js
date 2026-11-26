@@ -4,12 +4,58 @@ const nwPath = require("path");
 const fs = require("fs");
 const AddonUtils = require("www/js/AddonUtils.js");
 const parser = require(nwPath.join(thisAddon.getPathRelativeToRoot(), "pm4Ps2.module.js"));
+const guidance = require(nwPath.join(thisAddon.getPathRelativeToRoot(), "pm4Ps2.guidance.js"));
+const TranslationPrompts = require("www/js/TranslationPrompts.js");
+const TranslationValidation = require("www/js/TranslationValidation.js");
 const parserTitle = "Princess Maker 4 (PS2)";
 thisAddon.gameEngine = "pm4Ps2";
 thisAddon.originalResourceIsReadOnly = true;
 AddonUtils(thisAddon);
 thisAddon.alwaysExportFromStage = true;
 const supportedEngines = [thisAddon.gameEngine];
+
+function applyTranslationGuidance(project) {
+    if (project?.gameEngine !== thisAddon.gameEngine) return false;
+    const changed = guidance.applyProjectDefaults(project);
+    const promptsChanged = TranslationPrompts.applyParserDefaults({trans, sys}, project, {
+        game: guidance.gamePrompt, engine: guidance.enginePrompt, source: parserTitle
+    });
+    if (project.options.validationPolicy) return changed || promptsChanged;
+    TranslationValidation.save(project, {rules: guidance.validationRules});
+    return true;
+}
+
+function upgradeTranslationGuidance() {
+    const project = trans.project;
+    const hadReference = Boolean(project?.files?.["Actor Reference"]);
+    if (!applyTranslationGuidance(project)) return;
+    trans.gridIsModified(true);
+    trans.refreshGrid();
+    if (!hadReference) queueMicrotask(() => {
+        if (trans.project === project) trans.drawFileSelector();
+    });
+}
+trans.on?.("onLoadTrans.pm4TranslationGuidance", upgradeTranslationGuidance);
+upgradeTranslationGuidance();
+
+const updateProjectFromSource = thisAddon.updateProject;
+thisAddon.updateProject = async function(...args) {
+    const previous = trans.project;
+    const result = await updateProjectFromSource.apply(thisAddon, args);
+    const updated = trans.project;
+    if (!updated || updated === previous) return result;
+    // The generic source update deliberately excludes reference tables.
+    const actors = previous.files["Actor Reference"];
+    if (actors) {
+        updated.files["Actor Reference"] = actors;
+        updated.references["Actor Reference"] = actors;
+    }
+    for (const key of ["translationPrompts", "translationConstraints"]) {
+        if (previous.options[key]) updated.options[key] = previous.options[key];
+    }
+    if (previous.options.validationPolicy) TranslationValidation.save(updated, previous.options.validationPolicy);
+    return result;
+};
 
 function resourcePath(root, fileId) {
     const name = fileId.replace(/^[\\/]+/, "");
@@ -48,6 +94,7 @@ thisAddon.finalizeTransData = async function(data) {
     data.project.options.sl = "ja";
     data.project.options.tl = "en";
     data.project.options.gridInfo = {rowHeaderWidth: 240, ...data.project.options.gridInfo, isRuleActive: true, rowHeaderInfo: true};
+    applyTranslationGuidance(data.project);
     return data;
 };
 

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.2 (2026-11-26)
+
+- New projects include an editable Actor Reference with character names, pronouns, and speech guidance for AI translation. The player-named daughter is labeled Daughter.
+- Added compact, language-neutral prompts and CP932 refinement checks. Requires Translator++ 8.11.9 or newer.
+
 ## 0.5.1 (2026-11-26)
 
 - Fixed missing speaker names on dialogue that continues across page advances and portrait changes, including lines spoken by the player-named daughter.

@@ -79,7 +79,7 @@ PRIME4.G2 initializes variable 2 with パトリシア and variable 3 with ヘイ
 native `0x1801`; dialogue using variable 2 addresses Papa, while variable 3
 describes adopting the daughter and receiving Cube's reports. These are the
 daughter/father custom-name slots. Row info displays their roles as
-`Daughter (custom name)` and `Father (custom name)`, retaining the numeric slot
+`Daughter` and `Father (custom name)`, retaining the numeric slot
 in `speakerVariable`. The chosen name itself cannot be recovered from the ISO.
 The Cube tutorial sets `キューブ` in statement 1482,
 then plays voice `7022` via `0x1620` and displays the status explanation in
