@@ -14,13 +14,26 @@ AddonUtils(thisAddon);
 thisAddon.alwaysExportFromStage = true;
 const supportedEngines = [thisAddon.gameEngine];
 
+// The engine prompt is stored once in the user's config. Replace an earlier
+// add-on default (fixed-length slots), but never a prompt the user has edited.
+function upgradeEnginePrompt() {
+    const saved = sys.config.translationPrompts?.engines?.[thisAddon.gameEngine];
+    if (!saved?.parserDefault || Object.prototype.hasOwnProperty.call(saved, "value") || !guidance.legacyEnginePrompts.includes(saved.preset)) return;
+    saved.preset = guidance.enginePrompt;
+    sys.saveConfig();
+}
 function applyTranslationGuidance(project) {
     if (project?.gameEngine !== thisAddon.gameEngine) return false;
+    upgradeEnginePrompt();
     const changed = guidance.applyProjectDefaults(project);
     const promptsChanged = TranslationPrompts.applyParserDefaults({trans, sys}, project, {
         game: guidance.gamePrompt, engine: guidance.enginePrompt, source: parserTitle
     });
-    if (project.options.validationPolicy) return changed || promptsChanged;
+    if (project.options.validationPolicy) {
+        const relaxed = guidance.relaxLineRules(project, TranslationValidation.save.bind(TranslationValidation));
+        return changed || promptsChanged || relaxed;
+    }
+    project.options.pm4LineRulesRelaxed = true;
     TranslationValidation.save(project, {rules: guidance.validationRules});
     return true;
 }
@@ -53,6 +66,11 @@ thisAddon.updateProject = async function(...args) {
     for (const key of ["translationPrompts", "translationConstraints"]) {
         if (previous.options[key]) updated.options[key] = previous.options[key];
     }
+    for (const [id, file] of Object.entries(updated.files)) {
+        if (/\.G2$/i.test(id)) guidance.migrateInlineRows(previous.files[id], file);
+    }
+    guidance.applyProjectDefaults(updated);
+    trans.refreshGrid();
     if (previous.options.validationPolicy) TranslationValidation.save(updated, previous.options.validationPolicy);
     return result;
 };
@@ -117,6 +135,12 @@ thisAddon.exportToFolder = async function(destinationDir, transData, options = {
     ui.log("Validating translations and exporting a separate ISO. This can take a moment.");
     const result = await parser.exportIso(init.entryPoint, output, {manifest: init.sourceManifest, translations});
     ui.log("Exported " + result.path + "; changed resources: " + (result.patchedFiles.join(", ") || "none"));
+    for (const resized of result.resized || []) ui.log(resized.name + " is now " + resized.size + " bytes.");
+    if (result.reclaimed?.length) ui.log("Disc space reused from the debug-menu scripts: " + result.reclaimed.join(", ") + " (now empty).");
+    if (result.warnings?.length) {
+        ui.log("Exported with " + result.warnings.length + " warning" + (result.warnings.length === 1 ? "" : "s") + " (text may overflow or be cut off in game):");
+        for (const line of result.warningLines) ui.log(line);
+    }
     return [result.path];
 };
 thisAddon.injectCopyMaterials = async function() { /* The ISO writer copies the disc once. */ };
@@ -145,7 +169,7 @@ thisAddon.handleExport = async function(targetPath, options = {}) {
 };
 
 thisAddon.registerProjectWizard = function() {
-    const $slide = $("<div><h2>Princess Maker 4 (PS2)</h2><p>Open the Japanese PS2 ISO (SLPM_659.36). Import dialogue, choices, item text, and editable artwork. Export or Inject creates a separate patched ISO.</p><p>Text translations must fit the original CP932 byte budgets and preserve line counts and % codes. Image sheets keep their original dimensions.</p><div class='parserFields'></div></div>");
+    const $slide = $("<div><h2>Princess Maker 4 (PS2)</h2><p>Open the Japanese PS2 ISO (SLPM_659.36). Import dialogue, choices, item text, and editable artwork. Export or Inject creates a separate patched ISO.</p><p>Keep % codes and inline variables such as {{daughter}}. Rewrap dialogue to fit the message box. Image sheets keep their original dimensions.</p><div class='parserFields'></div></div>");
     ui.newProjectDialog.addMenu({
         icon: thisAddon.getWebLocation() + "/" + thisAddon.package.icon, descriptionBar: "<h2>Princess Maker 4 (PS2)</h2>", actionBar: "",
         goToSlide: thisAddon.package.name, at: 8,
@@ -197,15 +221,16 @@ $(document).ready(() => ui.onReady(() => {
         require(nwPath.join(thisAddon.getPathRelativeToRoot(), "pm4Ps2.keyboard.js")).injectOptionFields());
     engines.addHandler(supportedEngines, "onOpenInjectDialog", async function($dialog) { $dialog.find(".copyOptionsBlock").addClass("hidden"); });
     const $budget = $("<span class='pm4Ps2Budget toolbar-content hidden'></span>").css({alignItems: "center", whiteSpace: "nowrap", padding: "0 8px"})
-        .attr("title", "Maximum CP932 bytes for the selected row. ASCII usually costs 1 byte, Japanese 2. Keep source line count and % codes. Shorter translations are space-padded.");
+        .attr("title", "Maximum CP932 bytes for the selected row, and the Japanese length. ASCII usually costs 1 byte, Japanese 2. Translations may be longer than the Japanese up to this limit; keep the source line count and % codes. A dialogue line fits about 34 half-width characters.");
     $("#quickFind").parent().before($budget);
     trans.on("beforeProcessSelection", (_event, row) => {
         const physical = trans.toPhysicalRow(row);
         const parameters = trans.getSelectedObject()?.parameters?.[physical] || [];
-        const budgets = parameters.map(p => p.byteLength).filter(Number.isFinite);
+        const budgets = parameters.map(p => p.maxBytes ?? p.byteLength).filter(Number.isFinite);
+        const japanese = parameters.map(p => p.byteLength).filter(Number.isFinite);
         const visible = trans.project?.gameEngine === "pm4Ps2" && budgets.length > 0;
         $budget.toggleClass("hidden", !visible);
-        if (visible) $budget.text("Max: " + Math.min(...budgets) + " CP932 bytes");
+        if (visible) $budget.text("Max: " + Math.min(...budgets) + " CP932 bytes (JP " + Math.min(...japanese) + ")");
     });
     trans.on("beforeSelectFile", () => $budget.addClass("hidden"));
 }));

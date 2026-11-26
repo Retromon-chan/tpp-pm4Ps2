@@ -16,7 +16,7 @@ offsets/GCEX assumptions to the PS2 disc.
    Top-level `this` there is the Addon instance. Never require that entry as
    a Node module. Persist options needed after reopening in project.options.init.
 4. Keep the wizard, serial/format detector, and whole-disc export hooks aligned.
-   Display byte budgets in the toolbar; bulk cell comments redraw once per row
+   Display byte limits in the toolbar; bulk cell comments redraw once per row
    in the host and make the main script unusable.
 5. Add format fixtures and tests: extraction/context/speaker metadata, unchanged
    export round trip, translated output, duplicate strings in different contexts,
@@ -28,7 +28,11 @@ offsets/GCEX assumptions to the PS2 disc.
    inject, and update in Translator++. Verify module loading after compilation.
 
 Do not modify original game resources during extraction or export. Preserve
-encoding/BOM, newline style, syntax, binary offsets/lengths, and non-text data.
+encoding/BOM, newline style, syntax, and non-text data. Only translated text
+resources may change length: G2 scripts are relocated through
+`relocateG2`/`verifyRelocation`, and every operand that holds a code offset
+(see ABSOLUTE_OPS, including the choice-menu `13` PUSHADDR) must be relocated.
+All other resources keep their exact offsets and lengths, and the ISO size never changes.
 Use the same file IDs and contexts for extraction and writing. Use the resolved
 translationPair supplied by AddonUtils instead of guessing a target column.
 

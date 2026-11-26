@@ -244,6 +244,12 @@ module.exports = function install(addon, {trans, ui, common, addonLoader, OcrEng
         // inside our ISO and must not subsequently be written as loose PNGs.
         options.imageTranslatorHandled = true;
         ui.log("Exported " + result.path + "; changed resources: " + (result.patchedFiles.join(", ") || "none"));
+        for (const resized of result.resized || []) ui.log(resized.name + " is now " + resized.size + " bytes.");
+        if (result.reclaimed?.length) ui.log("Disc space reused from the debug-menu scripts: " + result.reclaimed.join(", ") + " (now empty).");
+        if (result.warnings?.length) {
+            ui.log("Exported with " + result.warnings.length + " warning" + (result.warnings.length === 1 ? "" : "s") + " (text may overflow or be cut off in game):");
+            for (const line of result.warningLines) ui.log(line);
+        }
         return [result.path];
     };
     ui.onReady(() => {

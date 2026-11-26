@@ -3,7 +3,17 @@
 const REFERENCE = "Actor Reference";
 const LEGACY_DAUGHTER = "Daughter (custom name)";
 const gamePrompt = "Fantasy life sim with family, school, work, and court scenes. Use Actor Reference for names, pronouns, and register. Keep choices and effects unambiguous, follow the project glossary, and reveal relationships only when the scene does. Localize expressive dialogue glyphs ㌍ and ㍍ by emotion.";
-const enginePrompt = "G2 and item text use fixed CP932 slots. Each line break uses two stored bytes. Keep printf widths and order (e.g. %2d), and fit repeated text to its smallest slot. The game supplies speaker plates and player-chosen names separately. Shorten wording within the row; keep its original pages.";
+const previousEnginePrompt = "G2 and item text are CP932. Translations may be longer than the Japanese up to each row's byte limit; each line break uses two stored bytes. The message box shows three lines of about 34 half-width characters: rewrap dialogue freely within that, rather than matching the Japanese breaks. Keep labels and choices on one line, and keep printf widths and order (e.g. %2d). The game supplies speaker plates and player-chosen names separately.";
+const enginePrompt = previousEnginePrompt.replace("The game supplies speaker plates and player-chosen names separately.",
+    "Keep {{daughter}}, {{father}} and numbered {{strN}} placeholders exactly as written and in order. Move surrounding words as needed. The game fills in each value at runtime.");
+const legacyPattern = String.raw`%[-+0 #]*\d*(?:\.\d+)?[diuoxXfFeEgGcs%]|\\[^n]`;
+const variablePattern = String.raw`\{\{(?:daughter|father|str\d+)\}\}`;
+const controlPattern = legacyPattern + "|" + variablePattern;
+// Earlier add-on defaults, replaced automatically while still unedited.
+const legacyEnginePrompts = [previousEnginePrompt,
+    "G2 and item text use fixed CP932 slots. Each line break uses two stored bytes. Keep printf widths and order (e.g. %2d), and fit repeated text to its smallest slot. The game supplies speaker plates and player-chosen names separately. Shorten wording within the row; keep its original pages.",
+    "G2 and item text are CP932. Translations may be longer than the Japanese up to each row's byte limit; each line break uses two stored bytes. Keep the source line count and printf widths and order (e.g. %2d). A dialogue line fits about 34 half-width characters, so balance long sentences across the existing lines. The game supplies speaker plates and player-chosen names separately."
+];
 
 // Project-local spellings and voice directions based on the PS2 script. Gender
 // stays unknown where a speaker label or the available context is ambiguous.
@@ -172,6 +182,35 @@ function applyActorReference(project) {
     return true;
 }
 
+// Bring the generated per-occurrence limits of saved projects up to date, using
+// the same rule as import and export. Notes and constraints the user has edited
+// are left alone; only generated values are replaced.
+const GENERATED_NOTE = /^CP932 (?:budget|limit): /;
+function addByteLimits(id, file) {
+    const {occurrenceLimits} = require("./pm4Ps2.module.js"), name = id.replace(/^[\\/]+/, "");
+    let changed = false;
+    (file.parameters || []).forEach((occurrences, row) => {
+        const source = file.data?.[row]?.[0];
+        for (const info of occurrences || []) {
+            if (!info || !Number.isFinite(info.byteLength) || typeof source !== "string") continue;
+            const kind = /^ITEM_MSG\.TXT$/i.test(name) ? "description" : /^ITEM_NAM\.TXT$/i.test(name) ? "itemName"
+                : info.speakerSource === "pm4-name-command" ? "dialogue" : "short";
+            const limits = occurrenceLimits(kind, info.byteLength, source);
+            const before = JSON.stringify([info.maxBytes, info.textKind, info.translationConstraints, info.rowInfoNote]);
+            info.maxBytes = limits.maxBytes; info.textKind = limits.textKind;
+            // Generated constraints are only ever {maxCharsPerLine}; keep any other user setting.
+            const generated = c => c && Object.keys(c).every(k => k === "maxCharsPerLine");
+            if (!info.translationConstraints || generated(info.translationConstraints)) {
+                if (limits.translationConstraints) info.translationConstraints = limits.translationConstraints;
+                else delete info.translationConstraints;
+            }
+            if (!info.rowInfoNote || GENERATED_NOTE.test(info.rowInfoNote)) info.rowInfoNote = limits.rowInfoNote;
+            if (JSON.stringify([info.maxBytes, info.textKind, info.translationConstraints, info.rowInfoNote]) !== before) changed = true;
+        }
+    });
+    return changed;
+}
+
 function applyProjectDefaults(project) {
     if (project?.gameEngine !== "pm4Ps2") return false;
     project.options ||= {};
@@ -183,19 +222,29 @@ function applyProjectDefaults(project) {
                 reference: {enabled: false},
                 gameText: {
                     encoding: "cp932", preserveLineCount: true,
-                    byteBudget: {mode: "parameter", parameter: "byteLength", encoding: "cp932"},
+                    byteBudget: {mode: "parameter", parameter: "maxBytes", encoding: "cp932"},
                     replacements: {"\r\n": "\\n", "\r": "\\n", "\n": "\\n"},
-                    controlPattern: String.raw`%[-+0 #]*\d*(?:\.\d+)?[diuoxXfFeEgGcs%]|\\[^n]`
+                    controlPattern
                 }
             }
         };
         changed = true;
     }
+    const gameText = project.options.translationConstraints.types?.gameText;
+    if (gameText?.controlPattern === legacyPattern) {
+        gameText.controlPattern = controlPattern;
+        changed = true;
+    }
+    // Projects from versions with fixed-length slots budgeted by byteLength; the
+    // exporter now relocates text and enforces maxBytes instead.
+    const budget = project.options.translationConstraints.types?.gameText?.byteBudget;
+    if (budget?.mode === "parameter" && budget.parameter === "byteLength") { budget.parameter = "maxBytes"; changed = true; }
     for (const [id, file] of Object.entries(project.files)) {
         if (/\.(?:G2|TXT)$/i.test(id) && !file.translationConstraintType && project.options.translationConstraints.types?.gameText) {
             file.translationConstraintType = "gameText";
             changed = true;
         }
+        if (/\.(?:G2|TXT)$/i.test(id)) changed = addByteLimits(id, file) || changed;
         if (!/\.G2$/i.test(id)) continue;
         for (const occurrences of file.parameters || []) for (const info of occurrences || []) {
             if (info?.speakerSource !== "pm4-name-command" || info.speakerVariable !== 2 || info.rowInfoText !== LEGACY_DAUGHTER) continue;
@@ -206,5 +255,52 @@ function applyProjectDefaults(project) {
     return changed;
 }
 
-const validationRules = {lineCount: "block", blankLines: "block", maxBytes: "block", syntaxTokens: "block", strayBackslash: "block", expansion: "off"};
-module.exports = {gamePrompt, enginePrompt, validationRules, applyProjectDefaults};
+// Line breaks are free text to the engine: line count, blank lines and width
+// only warn. Bytes, codes and stray backslashes are export errors.
+const validationRules = {lineCount: "warn", blankLines: "warn", maxBytes: "block", lineWidth: "warn", syntaxTokens: "block", strayBackslash: "block", expansion: "off"};
+// Earlier versions blocked on line count and blank lines. Downgrade those two
+// to warnings once per project; later user choices are kept.
+function relaxLineRules(project, save) {
+    const policy = project?.options?.validationPolicy;
+    if (!policy?.rules || project.options.pm4LineRulesRelaxed) return false;
+    project.options.pm4LineRulesRelaxed = true;
+    const rules = {...policy.rules};
+    for (const key of ["lineCount", "blankLines"]) if (rules[key] === "block") rules[key] = "warn";
+    save(project, {...policy, rules});
+    return true;
+}
+// Used after Update Project has imported ordinary rows. Resolve old fragments
+// by occurrence because identical words in different scenes can have overrides.
+function migrateInlineRows(previous, updated) {
+    if (!previous?.data || !updated?.data) return;
+    const locations = new Map();
+    previous.context?.forEach((contexts, row) => contexts?.forEach((key, i) => locations.set(key, {row, i})));
+    updated.parameters?.forEach((occurrences, row) => {
+        for (const [i, info] of (occurrences || []).entries()) {
+            if (!info?.inlineParts || locations.has(updated.context[row][i])) continue;
+            const parts = info.inlineParts.map(part => {
+                if (typeof part === "string") return part;
+                const loc = locations.get(part.context);
+                if (!loc || previous.data[loc.row][0] !== part.source) return {cells: [part.source]};
+                return {cells: previous.data[loc.row], override: previous.parameters?.[loc.row]?.[loc.i]?.translation,
+                    tags: previous.tags?.[loc.row]};
+            });
+            const fragments = parts.filter(p => typeof p !== "string");
+            const count = Math.max(1, ...fragments.map(p => p.cells.length));
+            const combine = select => parts.map(p => typeof p === "string" ? p : select(p)).join("");
+            const best = (cells, col) => cells.slice(0, col + 1).filter(Boolean).pop() || "";
+            const cells = updated.data[row];
+            for (let col = 1; col < count; col++) {
+                if (i === 0 && !cells[col] && fragments.some(p => p.cells[col])) cells[col] = combine(p => best(p.cells, col));
+            }
+            const effective = combine(p => p.override || best(p.cells, count));
+            if (effective !== best(cells, cells.length)) {
+                info.contextStr = updated.context[row][i];
+                info.translation = effective;
+            }
+            updated.cacheResetOnChange = {};
+            updated.tags[row] = [...new Set([...(updated.tags[row] || []), ...fragments.flatMap(p => p.tags || [])])];
+        }
+    });
+}
+module.exports = {migrateInlineRows, gamePrompt, enginePrompt, legacyEnginePrompts, validationRules, relaxLineRules, applyProjectDefaults};

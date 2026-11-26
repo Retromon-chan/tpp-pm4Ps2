@@ -6,7 +6,9 @@ section you need.
 | Problem | Targeted source/reference |
 |---|---|
 | Outer ISO, embedded CVM/ISO extents, streamed export | [Format plan](../plan/README.md), Disc structure; `pm4Ps2.module.js` |
-| G2CD0460 transform, instruction widths, jumps, fixed slots | Format plan, G2CD0460 / Rewriting sections; module `WORD_OPS`, `SINGLE_OPS`, `validateResource` |
+| G2CD0460 header, instruction widths, jumps, relocation, byte limits | Format plan, G2CD0460 / Rewriting sections; module `g2Header`, `WORD_OPS`, `ABSOLUTE_OPS`, `relocateG2`, `verifyRelocation`, `byteLimit` |
+| Text cropped in game, window capacity | Format plan, Text window capacity; module `TEXT_WINDOWS` |
+| Resized resources, reclaimed disc space | Format plan, Disc space for longer text; module `planExtents`, `exportIso` |
 | Speaker flow, custom daughter/father names | Format plan, Speaker metadata; module name-state/control-flow analysis |
 | SPD/TIM2 tiles, alpha and PNG re-import | Format plan, SPD/TIM2 section; `pm4Ps2.images.js`, `pm4Ps2.image-ui.js` |
 | ABC/abc native keyboard and coupled label edits | Format plan, Optional keyboard; `pm4Ps2.keyboard.js` and `pm4Ps2.keyboard.test.js` |
@@ -16,7 +18,9 @@ Use heading/symbol searches and bounded reads. PM4's plan is long because it
 contains several independent features; a G2 text fix does not require loading
 the image, keyboard and emulator sections together.
 
-Here fixed-size writing preserves bytecode offsets and image extents. The keyboard uses
+Translated G2 scripts and item lists may change size: the writer relocates
+every code offset and verifies the result as the same program. Images, the
+executable and every other resource keep their exact extents. The keyboard uses
 existing two-byte full-width Latin key slots and changes tables plus two sprite
 sheets; it is not a scenario ASCII font replacement.
 

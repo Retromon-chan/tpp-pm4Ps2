@@ -5,15 +5,34 @@ const {transformString} = require("../pm4Ps2.module.js");
 const word = n => {const b = Buffer.alloc(4); b.writeUInt32LE(n); return b;};
 const op = (code, value) => Buffer.concat([Buffer.from([code]), word(value)]);
 const str = (code, text) => {const b = iconv.encode(text, "cp932"); return Buffer.concat([op(code, b.length), transformString(b, true)]);};
+// Header: magic, 0x1B, statement count, symbol count, then per symbol
+// [code offset][length][name], then [label count][labels]. Code offsets are
+// relative to the byte after the 0x1B that starts the code.
 function g2() {
-    const header = Buffer.alloc(21); header.write("G2CD0460"); header[8] = 0x1b;
+    const header = Buffer.alloc(17); header.write("G2CD0460"); header[8] = 0x1b;
     header.writeUInt32LE(7, 9); header.writeUInt32LE(1, 13);
-    const symbol = Buffer.concat([word(4), transformString(Buffer.from("MAIN"), true), word(0)]);
-    const code = Buffer.concat([Buffer.from([0x1b]), op(0x20, 1), op(0x20, 2), op(0x21, 3), Buffer.from([6]),
+    const head = [Buffer.from([0x1b]), op(0x20, 1), op(0x20, 2), op(0x21, 3), Buffer.from([6]),
         op(3, 1), str(2, "アリス"), op(5, 0x2100),
-        op(0x21, 4), Buffer.from([6]), str(2, "0001"), op(5, 0x1620), str(1, "こんにちは\\n世界 %d"), op(5, 99),
-        op(0x21, 5), str(2, "はい"), op(0x21, 6), str(2, "はい"), str(2, "gd/sys/example.spd")]);
-    return Buffer.concat([header, symbol, word(0), code]);
+        op(0x21, 4), Buffer.from([6]), str(2, "0001"), op(5, 0x1620), str(1, "こんにちは\\n世界 %d"), op(5, 99)];
+    const target = Buffer.concat(head).length - 1; // statement 5, after the dialogue
+    const code = Buffer.concat([...head,
+        op(0x21, 5), str(2, "はい"), op(0x21, 6), str(2, "はい"), str(2, "gd/sys/example.spd"),
+        Buffer.from([6]), op(0x13, target), str(2, "menu"), op(5, 0x118f),              // choice handler address
+        Buffer.from([6]), op(3, 192), op(3, 350), op(3, 50), op(3, 0), op(5, 0x1011)]); // dialogue window SetRect
+    const symbol = Buffer.concat([word(0), word(4), transformString(Buffer.from("MAIN"), true)]);
+    return Buffer.concat([header, symbol, word(1), word(target), code]);
+}
+// A script spanning several sectors, with a jump over all of its dialogue.
+function longG2(count = 50) {
+    const header = Buffer.alloc(17); header.write("G2CD0460"); header[8] = 0x1b;
+    const parts = [Buffer.from([0x1b]), op(0x20, 1), op(0x20, 2), op(7, 0)];
+    let statement = 2;
+    for (let i = 0; i < count; i++) parts.push(op(0x21, ++statement), str(1, "長い台詞その" + i + "\\nもう一行の台詞です。"));
+    const end = Buffer.concat(parts).length - 1;
+    parts.push(op(0x21, ++statement), Buffer.from([0x0e]));
+    const code = Buffer.concat(parts); code.writeUInt32LE(end, 12);
+    header.writeUInt32LE(statement + 1, 9);
+    return Buffer.concat([header, word(1), word(end), code]);
 }
 function dirRecord(name, lba, size, directory = false) {
     const id = Buffer.from(name), n = 33 + id.length + (id.length % 2 ? 0 : 1), b = Buffer.alloc(n);
@@ -31,11 +50,14 @@ function filesystem(buffer, base, files) {
 function iso(options = {}) {
     const b = Buffer.alloc((options.keyboard ? 1700 : 160) * 2048, 0), cvm = Buffer.alloc((options.keyboard ? 1600 : 100) * 2048);
     cvm.write("CVMH");
+    // longRoom: a multi-sector ROOM.G2 followed by a debug TEST.G2 (unless noTestScript).
     const files = [
-        {name: "ROOM.G2", lba: 24, bytes: g2()}, {name: "PRIME4.G2", lba: 25, bytes: g2()},
+        options.longRoom ? {name: "ROOM.G2", lba: 40, bytes: longG2()} : {name: "ROOM.G2", lba: 24, bytes: g2()},
+        {name: "PRIME4.G2", lba: 25, bytes: g2()},
         {name: "ITEM_NAM.TXT", lba: 26, bytes: iconv.encode("\r\n剣\r\n盾\r\n", "cp932")},
         {name: "ITEM_MSG.TXT", lba: 27, bytes: iconv.encode("\r\n強い剣\r\n強い盾\r\n", "cp932")}
     ];
+    if (options.longRoom && !options.noTestScript) files.push({name: "TEST.G2", lba: 42, bytes: Buffer.alloc(6 * 2048, 0x33)});
     if (options.images) files.push({name: "W_STAT1.SPD", lba: 30, bytes: spd(260, 8)});
     if (options.artwork) files.push({name: "EV01.SPD", lba: 36, bytes: spd(32, 32)});
     if (options.keyboard) files.push({name: "ENTRY2A.SPD", lba: 60, bytes: spd(640, 448)}, {name: "ENTRY2B.SPD", lba: 630, bytes: spd(640, 448)});
@@ -121,4 +143,4 @@ function keyboardElf() {
     iconv.encode("ａｂｃｄｅｆｇｈｉｊｋｌｍｎｏｐｑｒｓｔｕｖｗｘｙｚ", "cp932").copy(b, 768);
     iconv.encode("０１２３４５６７８９", "cp932").copy(b, 832); return b;
 }
-module.exports = {g2, iso, speakerG2, spd, keyboardElf};
+module.exports = {g2, longG2, iso, speakerG2, spd, keyboardElf};

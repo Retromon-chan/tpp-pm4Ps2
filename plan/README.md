@@ -13,7 +13,8 @@ encoding carry over; PS2 resource discovery and VM parsing were measured anew.
   at embedded sector 16. Directory entries provide resource offsets and lengths.
 - No complete ISO or CVM is held in memory. Directory reads are bounded and
   resource buffers are small. Export hashes a streamed copy of the original,
-  writes only fixed-size resource ranges, rereads those ranges, then publishes
+  writes only the changed resources (see "Disc space for longer text"),
+  rereads those ranges and the rewritten directory, then publishes
   through an exclusive hard link. Outputs require a filesystem supporting hard
   links (such as NTFS). Existing outputs are never overwritten.
 
@@ -30,39 +31,139 @@ or interleaved files. Only this serial and the unencrypted CVM layout are accept
 
 ## G2CD0460
 
-- Eight-byte magic, marker `0x1b`, u32 statement limit at +9, u32 symbol count
-  at +13, and an opaque u32 at +17 preserved exactly.
-- At +21: symbols `[u32 length][scrambled CP932 name][u32 code offset]`.
-- Next: u32 jump-table entries until the instruction prefix
-  `1b 20 01000000 20 02000000`. The script-entry marker is followed by bytecode.
-- Code offsets are relative to the byte immediately after that initial `1b`.
-- `01` and `02`: u32 byte length, then scrambled text.
+Header layout, as read by the ELF loader at 0x17FB40 (not inferred from the files):
+
+- Eight-byte magic, marker `0x1b`, u32 statement limit at +9, u32 symbol count at +13.
+- At +17: symbols `[u32 code offset][u32 length][scrambled CP932 name]`. In
+  ROOM.G2, all 3,122 entries are function entries on instruction boundaries.
+- Then `[u32 label count][label count × u32 code offset]`. In ROOM.G2 there are
+  10,447 labels, and `labels[N]` is the position of the instruction `14 N`.
+- The loader skips to the next `1b`. The retail scripts then begin with
+  `1b 20 01000000 20 02000000`, which the parser requires.
+- Code offsets are relative to the byte immediately after that `1b`.
+- `01`, `02` and `0f`: u32 byte length, then scrambled text.
+
+Versions up to 0.5.2 read this header one field off: an "opaque u32 at +17",
+then `[length][name][code]`. That made every symbol's offset look like the
+next symbol's. It also turned PRIME4's label count (72) into a "stale
+`sell_item` symbol at 72", and the label count into an extra table entry.
+Extraction worked either way; relocation needs the real layout. The
+correction changes none of the 15,004 retail speaker labels.
 - `stored[i] = (plain[i] + i + byteLength) & 255`.
 - Literal `\n` means an in-game line break. Item files use actual CRLF between
   entries, a blank first/header line, and 89 item lines.
 
-Instruction operand widths are recorded in the module's WORD_OPS and SINGLE_OPS.
-All four scripts parse from start to exact EOF with sequential `20`/`21`
-statement IDs ending at header statement limit minus one; every jump-table target
-lands on an instruction boundary. Unknown opcodes, invalid counts, bounds, and
-broken jump targets are rejected instead of falling back to scanning bytes.
+Instruction operand widths are recorded in the module's WORD_OPS, SINGLE_OPS,
+STRING_OPS and SKIP_OP. They follow the interpreter's dispatch chain at
+0x1791A0 in the ELF. All four scripts parse from start to exact EOF, with
+sequential `20`/`21` statement IDs ending at the header statement limit minus
+one. Every label and symbol lands on an instruction boundary. Unknown opcodes,
+invalid counts, bounds, and broken targets are rejected instead of falling back
+to scanning bytes.
+
+These operands hold code offsets (ABSOLUTE_OPS):
+- `07` JMP, `08` JZ, `09` JNZ, `0a` CALL: absolute; 0xFFFFFFFF means end.
+- `13` PUSHADDR: absolute. It runs the same handler as `03` (0x17D900) but
+  always carries a function entry address. All 199 in ROOM.G2 (5 in PRIME4.G2)
+  register choice-menu handlers: `13 hc_set0; 02 "<choice>"; 05 0x118F`. No
+  `03` constant is used as an address.
+- `0c` SKIP `[u32][u32 relative]`: not used on this disc, handled anyway.
 
 ROOM.G2 has 26,449 string operands total (10,637 opcode 01 and 15,812 opcode 02).
 Only nonempty dialogue and Japanese-bearing short strings are exposed.
-PRIME4.G2 ships one stale `sell_item` symbol at code offset 72 inside an operand;
-it is preserved. Symbol targets are range checked; jump-table targets are boundary
-checked. Requiring every symbol to be an instruction rejects the retail file.
 
 Test/development scripts: TEST.G2 (2,167,728 bytes, 26,790 string operands),
 DEVTEST.G2 (2,149,105 bytes, 26,371 string operands). They are optional.
 
 ## Rewriting and limitations
 
-Every replacement is CP932 encoded, checked against its byte budget, space padded,
-then re-scrambled at the original offset. Length words, statement/jump tables,
-symbols, non-text arguments, executable, unedited images, audio, and ISO directories
-are unchanged. Item lines use the same fixed-budget policy to preserve their extent
-and directory lengths. No repacking or relocation is attempted.
+Every replacement is CP932 encoded and checked against its limit (`byteLimit`,
+below). In G2 scripts the new text is written at its exact length, and the
+bytecode is relocated:
+- symbol and label tables,
+- the operands of `07`–`0a` and `13`,
+- the relative operand of `0c`.
+
+`verifyRelocation` then re-decodes the output. It requires the same
+instructions, operands, symbol names and table sizes, and every target must
+map to the corresponding instruction. Item lines are rejoined with their CRLF
+structure.
+
+Cross-check on the retail ROOM.G2: with the same five translations, this
+writer and an independent Python implementation (not shipped) produce
+byte-identical files. That implementation's verifier also accepts this
+writer's output.
+
+Limits per occurrence (`byteLimit`, stored as parameter `maxBytes`, shown in the toolbar):
+
+| Kind | Rule | Reason |
+| --- | --- | --- |
+| dialogue (`01`), item description | ≤3 source lines: max(JP, 180) | dialogue-window slot pool (see below) |
+| dialogue with more lines (letters, endings) | max(JP, min(960, max(2×JP, 180))) | ~1 KB text buffer at window+0x64, strcpy/strcat at 0x16E5A0 |
+| short string (`02`) | max(JP, 24, ⌈1.5×JP⌉) | choices (Japanese ≤9 characters) stay at 24; longer status/result strings get ordinary expansion |
+| item name | max(JP, 18) | item list slot pool, shared by 5 rows |
+
+Line breaks are plain `\n` text to the engine, so export never checks line
+counts. In Translator++, the validation rules `lineCount`, `blankLines` and
+`lineWidth` (dialogue `maxCharsPerLine` 34) are warnings. Because they don't
+block, the AI prompt does not demand the Japanese line breaks either. The
+99th percentile of Japanese lines is 34 bytes (17 full-width characters), and
+the box shows about 3 lines. The real pixel width has not been measured: in
+the user's test a 57-character line displayed in full but overflowed the box.
+
+Projects saved by 0.5.2 or earlier budget by `byteLength`. On load,
+`applyProjectDefaults` refreshes the generated `maxBytes`, `textKind`, width
+constraint and note using the same rule (the parameters then match a fresh
+import). `relaxLineRules` downgrades a blocking `lineCount`/`blankLines`
+policy to warnings once per project, flagged by `pm4LineRulesRelaxed`. The
+stored engine prompt is replaced only while it is still an unedited old default.
+
+### Text window capacity
+
+Native `0x1011` is SetRect(x, y, characters, 0), handler 0x16C1D0. It stores
+characters × 5 at window+0x28. The renderer created at 0x16E3F0 gets that
+many 32-byte slots (0x14C888: `n*32 + 0x3a0`) and a `(n*256 + 0x600)*2`-byte
+draw buffer. Text past the pool is silently not drawn.
+
+`Platform_Start` in both PRIME4.G2 and ROOM.G2 creates the windows:
+- the dialogue window `(192,350,50,0)` (the `03 50` at code offset 63),
+- six small windows `(…, 9, 0)` at code offsets 210, 923, 1054, 1335, 1466 and 1597,
+- the full-screen letter window `(32,24,640,480)`.
+
+In PCSX2 the user saw an English line stop after about 80 characters with 50,
+and display in full with 120. Whenever any text resource changes, export
+rewrites these constants in both scripts (`TEXT_WINDOWS`, matched by their
+exact arguments): dialogue 50 → 120, small windows 9 → 16. The small windows'
+purpose is inferred, not observed. Set `expandTextWindows: false` to skip it.
+
+### Disc space for longer text
+
+DATA.BIN has no free sectors: VOICE.AFS ends at the CVM volume's last
+sector. A resource that still fits its own sectors is rewritten in place, and
+its directory size is updated. Otherwise `planExtents` merges touching extents
+from two sources:
+- the resource's own old extent,
+- the developer scripts TEST.G2 and DEVTEST.G2. PRIME4 loads `script\test.g2`
+  and `script\devtest.g2` only from its developer menu. They are excluded if
+  the export changes them.
+
+It then places resources first-fit, largest first. ROOM.G2 (sector 393628) is
+followed directly by TEST.G2, so it can reach 2,116 sectors (4,333,568 bytes)
+in place. Reclaimed entries keep their sector but get size 0, so the
+developer menu's loader rejects them. Freed sectors are zeroed. After writing,
+the embedded directory is re-read and must match the plan exactly.
+
+Retail stress export through `exportIso`:
+- Every one of 9,977 distinct dialogue rows became 30 ASCII characters per
+  non-blank line, with codes kept.
+- ROOM.G2 grew from 2,163,247 to 2,343,027 bytes, and TEST.G2 was reclaimed.
+- The independent Python implementation extracted the result: it is the same program
+  with 10,621 strings changed. DEVTEST.G2 and all 1,279 other files are
+  byte-identical, and the ISO size is unchanged.
+
+Saves store the raw script position plus up to 16 verification bytes, and the
+last statement id (thread save at 0x17B4D0). Saves made on another build of
+the text may not resume at the same point.
 
 Empty/missing targets preserve original bytes. Text-only, exact-context, and
 ParserBase-style group lookup use the same contexts on import and export.
@@ -245,3 +346,22 @@ of its 456×496 atlas. Other prompts and sprite records stay intact.
 On 2026-11-26 an isolated PCSX2 test of the retail build accepted 12 characters
 in each field and rendered both names together. The subsequent smaller preview
 and parchment cleanup address the clipping and background observed in that run.
+
+
+### Inline runtime string printing
+
+On SLPM_659.36 a direct string print is statement 21, reset 06, load string
+variable 42 (u32 slot), native 05 (0x100A). In ROOM.G2 the dialogue operands
+at 0x7143c and 0x71463 surround a print of slot 2. Slot 3 is the father's
+name. Other directly printed slots retain their decimal numbers in the editor.
+Only adjacent dialogue and prints with one control-flow entry are joined.
+Computed arguments and calls without adjacent dialogue remain ordinary VM code.
+The writer preserves the calls and can insert a dialogue operand at either end
+of a print when required by translated word order. Relocation verification
+checks each added operand and all original control-flow targets.
+
+
+Across all four retail scripts the direct-print scan found slots 2, 3, 4, 9,
+10, 11, 12 and 17. In ROOM.G2 the adjacent dialogue groups use slots 2, 3, 4
+and 17. Slot 17 appears in messages about using items and changing clothes,
+so the editor keeps its numeric identifier rather than assuming a person.
