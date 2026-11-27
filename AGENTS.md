@@ -1,9 +1,11 @@
 # Working on pm4Ps2
 
-This parser supports the Japanese PS2 release SLPM_659.36. Use the
+This parser supports the Japanese PS2 release SLPM_659.36 and the Japanese PC
+release (game folder with a GCEX `script` archive). Use the
 [case map](plan/case-map.md) to select relevant
 README/plan sections before changing format logic. Do not apply PC patch
-offsets/GCEX assumptions to the PS2 disc.
+offsets/GCEX assumptions to the PS2 disc, and keep PC projects
+(`init.platform === "pc"`) away from ISO, image and keyboard code.
 
 1. Keep measured signatures, encoding, extraction rules, and limitations in
    plan/README.md current. Retail game bytes must not be committed as fixtures.
@@ -12,6 +14,7 @@ offsets/GCEX assumptions to the PS2 disc.
    SPD/PNG logic belongs in pm4Ps2.images.js; browser/Images-pane integration
    belongs in pm4Ps2.image-ui.js and receives host objects explicitly.
    Optional native keyboard tables and key-label patches belong in pm4Ps2.keyboard.js.
+   GCEX archive reading and rebuilding belongs in pm4Ps2.gcex.js.
 3. Use pm4Ps2.js only for Translator++ UI and AddonUtils integration.
    Top-level `this` there is the Addon instance. Never require that entry as
    a Node module. Persist options needed after reopening in project.options.init.
@@ -24,6 +27,7 @@ offsets/GCEX assumptions to the PS2 disc.
 6. Run `node --test www/addons/pm4Ps2/test/pm4Ps2.module.test.js`
    and `node --test www/addons/pm4Ps2/test/pm4Ps2.images.test.js`
    and `node --test www/addons/pm4Ps2/test/pm4Ps2.keyboard.test.js`
+   and `node --test www/addons/pm4Ps2/test/pm4Ps2.pc.test.js`
    from the Translator++ root. Also exercise New Project, reopen, folder/zip export,
    inject, and update in Translator++. Verify module loading after compilation.
 
@@ -32,7 +36,12 @@ encoding/BOM, newline style, syntax, and non-text data. Only translated text
 resources may change length: G2 scripts are relocated through
 `relocateG2`/`verifyRelocation`, and every operand that holds a code offset
 (see ABSOLUTE_OPS, including the choice-menu `13` PUSHADDR) must be relocated.
+The writer may insert only `MSG`, `ARGS` and `SYSCALL 0x1105` (page turns for
+long dialogue), never a `STMT` or anything holding a code offset.
 All other resources keep their exact offsets and lengths, and the ISO size never changes.
+On PC only the `script` archive is written: other entries are copied byte for
+byte, a Japanese original is kept as `script.orig_backup` before it is
+replaced, and `PM4.exe` (copy-protected) is never touched.
 Use the same file IDs and contexts for extraction and writing. Use the resolved
 translationPair supplied by AddonUtils instead of guessing a target column.
 

@@ -1,4 +1,4 @@
-# Measured format: Princess Maker 4 PS2 / SLPM_659.36
+# Measured format: Princess Maker 4 PS2 / SLPM_659.36 and the Japanese PC release
 
 Source inspected: Japanese PS2 ISO, 1,379,336,192 bytes. Research supplied by the
 user: `pm4-english-patch/TRANSLATING IT YOURSELF.txt` and readable Python sources.
@@ -113,18 +113,47 @@ Limits per occurrence (`byteLimit`, stored as parameter `maxBytes`, shown in the
 
 | Kind | Rule | Reason |
 | --- | --- | --- |
-| dialogue (`01`), item description | ≤3 source lines: max(JP, 180) | dialogue-window slot pool (see below) |
-| dialogue with more lines (letters, endings) | max(JP, min(960, max(2×JP, 180))) | ~1 KB text buffer at window+0x64, strcpy/strcat at 0x16E5A0 |
+| dialogue (`01`) | ≤3 source lines: max(JP, 360) | about three pages; each page must fit the slot pool (see below) |
+| item description | ≤3 source lines: max(JP, 180) | item window, not paged |
+| dialogue with more lines (letters, endings) | max(JP, min(960, max(2×JP, 360))) | ~1 KB text buffer at window+0x64, strcpy/strcat at 0x16E5A0 |
 | short string (`02`) | max(JP, 24, ⌈1.5×JP⌉) | choices (Japanese ≤9 characters) stay at 24; longer status/result strings get ordinary expansion |
 | item name | max(JP, 18) | item list slot pool, shared by 5 rows |
 
-Line breaks are plain `\n` text to the engine, so export never checks line
-counts. In Translator++, the validation rules `lineCount`, `blankLines` and
-`lineWidth` (dialogue `maxCharsPerLine` 34) are warnings. Because they don't
-block, the AI prompt does not demand the Japanese line breaks either. The
-99th percentile of Japanese lines is 34 bytes (17 full-width characters), and
-the box shows about 3 lines. The real pixel width has not been measured: in
-the user's test a 57-character line displayed in full but overflowed the box.
+These are warnings. Export errors are CP932 failures, changed `%`/`{{…}}`
+codes, and a page over `HARD_BYTE_LIMIT` (960, the message buffer).
+
+Line breaks are plain `\n` text to the engine, so export never rejects a line
+count. The text layout loop at 0x14D270 handles only `\r`, `\t` and `\n`
+(x back to the margin, y += 24 px × scale) and has no width check: **the game
+never wraps**. Each `\n` line is one screen row, and a line that is too wide
+runs past the box (the user's 57-character test line). In Translator++, the
+validation rules `lineCount`, `blankLines` and `lineWidth` (dialogue
+`maxCharsPerLine` 34) are warnings, and the AI prompt asks for breaks at
+about 34 characters. The 99th percentile of Japanese lines is 34 bytes (17
+full-width characters); the real pixel width has not been measured.
+
+### Pages
+
+Native `0x1105` (handler 0x1663A0) waits for a button, then clears the box;
+`0x1104` (0x1663D0) waits without clearing, so the next `MSG` is appended
+(0x16E5A0 copies after a clear and appends otherwise). The script writes
+`STMT n; ARGS; SYSCALL 0x1105` after a message. In ROOM.G2 all ~9,550 boxes
+closed by `0x1105` hold one message (or inline group) of at most 3 lines;
+`0x1104` chains (narration, closed by `0x1002`) reach 9 lines.
+
+`resourceChanges` pages a dialogue occurrence when its translation has more
+lines than max(3, Japanese lines) and the next wait after its last `MSG` is
+not `0x1104`. `paginate` marks a page turn (`\f`) after every such number of
+lines, dropping blank lines at the top of a page and keeping trailing breaks
+on the last page. Each page turn becomes `ARGS; SYSCALL 0x1105` and the next
+page a new `MSG`: inserted after the original `MSG` (or before it, when a
+page starts right after an inline `{{name}}`), or next to the inline print
+for literal text that had no `MSG` of its own. No `STMT` is added, so the
+statement count, save statement ids and the speaker are unchanged.
+`relocateG2` accepts lists of these encoded instructions before or after an
+original instruction; jumps to that instruction land on the code inserted
+before it. `verifyRelocation` checks every inserted instruction byte for byte
+(only `MSG`, `ARGS` and `SYSCALL 0x1105` are allowed).
 
 Projects saved by 0.5.2 or earlier budget by `byteLength`. On load,
 `applyProjectDefaults` refreshes the generated `maxBytes`, `textKind`, width
@@ -150,6 +179,25 @@ and display in full with 120. Whenever any text resource changes, export
 rewrites these constants in both scripts (`TEXT_WINDOWS`, matched by their
 exact arguments): dialogue 50 → 120, small windows 9 → 16. The small windows'
 purpose is inferred, not observed. Set `expandTextWindows: false` to skip it.
+
+The 5-row shop and inventory item list (`ItemList`, vtable `0x290240`) renders
+item names through its own `TextLayer` (`this+0x4c`) initialized in
+`ItemList::Init` (`0x156930`) via `TextLayer::Init` (`0x156c50`, vtable
+`0x2902b0+0x2c`) with `addiu a2, zero, 50` (`0x24060032`) at `0x1569c8` (file
+offset `0x56a48` in `SLPM_659.36`). `TextLayer::Init` allocates `a2 × 4`
+render slots and `((a2 × 1024) + 0x600) × 2` bytes of double-buffered font
+packet DMA space, so 50 gives 200 slots and 105,472 bytes. In game (Clothier
+shop, user screenshot) this overflowed (`0x14d688` `"Font Packet Buffer Over
+flow !!!!!"`) after 41 visible ASCII characters across the five rows, cropping
+the fifth row's name to `"M"`. Whenever `ITEM_NAM.TXT` is patched and
+`expandTextWindows !== false`, `exportIso` patches the verified retail ELF at
+`0x56a48` to `addiu a2, zero, 150` (`0x24060096`), giving 600 slots and a
+310,272-byte buffer (matching the expanded dialogue window). This composes with
+native UI text edits and both English keyboard modes, and also discovers
+`SLPM_659.36` on demand for older manifests that omit it. On 2026-11-27 the
+user confirmed in PCSX2 that all five Clothier shop rows—including the fifth
+row `"Martial Outfit"`—now render in full. (The same screenshot also confirmed
+that the bottom description box fits ~34–35 half-width characters per line.)
 
 ### Disc space for longer text
 
@@ -380,3 +428,61 @@ Across all four retail scripts the direct-print scan found slots 2, 3, 4, 9,
 10, 11, 12 and 17. In ROOM.G2 the adjacent dialogue groups use slots 2, 3, 4
 and 17. Slot 17 appears in messages about using items and changing clothes,
 so the editor keeps its numeric identifier rather than assuming a person.
+
+## Japanese PC release (2005)
+
+Source inspected: the game folder of the Japanese PC release (`PM4.exe`,
+`script` 1,270,064 bytes, SHA-256 `bf719f0d…db09e`, `data`, `gd`). The
+community English patch's `TRANSLATING IT YOURSELF.txt` describes the archive;
+the points below were re-measured on that folder.
+
+- `script`, `data` and `gd` are GCEX archives: `"GCEX"`, u64 index offset at
+  +8, entry data from +0x10 back to back, then a `GCE3` index (u32 flags at
+  +4, u32 index size at +8, crc32 of the index with +0x14 zeroed at +0x14,
+  u32 count at +0x18, 32-byte records with u64 unpacked size at +0x10 and u64
+  stored size at +0x18, then `[u16 length][name]`). Entry offsets are the
+  running total of stored sizes. The index ends the file.
+- Index flag 0x10 (`script`): each entry is a chain of `GCE0` (stored) or
+  `GCE1` (LZP) blocks that adds up exactly to the unpacked size; one block
+  unpacks to at most 0x40020 bytes. Flag 0 (`data`): entries are raw.
+  `GCE1` is `[u32 unpacked][u32 0][u32 literal bytes][u32 literal bytes]
+  [u32 control bytes]`, then the literals and an MSB-first control stream of
+  gamma codes: a literal-run length, then a match length minus one. A match
+  has no offset; it starts where the last two output bytes were last seen.
+  `pm4Ps2.gcex.js` unpacks all 16 retail entries identically to the English
+  patch's decoder, and the test fixture encoder reproduces a retail 256 KiB
+  block's exact compressed size.
+- `script` holds `album.txt`, `item_msg.txt`, `item_nam.txt`, `pm4img.txt`,
+  `prime4.g2`, `prime4.g2m` and `room.g2` (2,492,052 bytes). Only the four text
+  resources are imported. The exporter stores changed entries as GCE0 blocks
+  of 0x40000 bytes (the English patch installs its archive the same way),
+  copies every other entry byte for byte, and recomputes the index crc.
+- The G2 scripts are the same G2CD0460 format, cipher and instruction set:
+  the PS2 parser decodes them with no unknown bytes, statement and jump checks
+  pass, and relocation verifies. Differences: a line break inside a string is
+  a 0x0A byte, not `\n` text (8,726 messages, no `\n` text at all), so the
+  writer keeps line feeds for scripts that use them. Item lists use `\n` text
+  on both releases.
+- ROOM.G2 on PC has 11,671 messages and 11,231 distinct rows (PS2: 10,455);
+  9,873 of the PS2's 9,978 distinct messages are identical after normalizing
+  line breaks. Page waits follow the PS2 pattern: 10,729 `0x1105`, 328
+  `0x1104`, and 10,464 messages directly followed by `STMT; ARGS; 0x1105`.
+  505 direct string prints (`0x100A`) give 420 inline rows.
+- `Platform_Start` calls `0x1011` with pixel rectangles, e.g. dialogue
+  `(198, 380, 440, 70)`, not the PS2's `(x, y, characters, 0)`. No
+  `TEXT_WINDOWS` rectangle matches, so no capacity patch is applied on PC.
+  Whether long English needs a different PC limit has not been tested.
+- The script starts by binding five glyphs to pictures in `data`: `㍍`
+  `s_heart.bmp`, `㌍` `s_q.bmp` ("!?"), `㌦` `s_a.bmp` (あ゛), `㌫`
+  `s_n.bmp` (ん゛), `㌣` `s_v.bmp` (う゛); 22×22 BMPs.
+- The English patch reports that the stock executable creates its fonts with
+  charset 0, so two-byte characters lose their first byte unless the system
+  locale is Japanese, and that `PM4.exe` is SafeDisc-protected. The add-on
+  changes only `script`.
+
+Export resolves the project's original by checksum from `script.orig_backup`
+or `script`, writes through a temporary file and a rename, keeps an original
+`script` as `script.orig_backup` before replacing it, and never replaces a
+non-original `script` in a folder containing an `.exe` or `gd` without that
+backup. Not yet confirmed in the PC game: playback of relocated and paged
+scripts, and the 2.5 MB uncompressed `script` with a larger `room.g2`.

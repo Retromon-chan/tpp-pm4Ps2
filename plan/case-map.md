@@ -8,6 +8,8 @@ section you need.
 | Outer ISO, embedded CVM/ISO extents, streamed export | [Format plan](../plan/README.md), Disc structure; `pm4Ps2.module.js` |
 | G2CD0460 header, instruction widths, jumps, relocation, byte limits | Format plan, G2CD0460 / Rewriting sections; module `g2Header`, `WORD_OPS`, `ABSOLUTE_OPS`, `relocateG2`, `verifyRelocation`, `byteLimit` |
 | Text cropped in game, window capacity | Format plan, Text window capacity; module `TEXT_WINDOWS` |
+| Too many lines for the box, page turns, line wrapping | Format plan, Pages; module `paginate`, `appendsToBox`, `PAGE_BREAK`, `resourceChanges` |
+| Japanese PC release: GCEX `script` archive, GCE0/GCE1 blocks, line feeds, backup/install | Format plan, Japanese PC release; `pm4Ps2.gcex.js`; module `inspectPcGame`, `exportPcGame`, `installPcArchive`; `test/pm4Ps2.pc.test.js` |
 | Resized resources, reclaimed disc space | Format plan, Disc space for longer text; module `planExtents`, `exportIso` |
 | Speaker flow, custom daughter/father names | Format plan, Speaker metadata; module name-state/control-flow analysis |
 | SPD/TIM2 tiles, alpha and PNG re-import | Format plan, SPD/TIM2 section; `pm4Ps2.images.js`, `pm4Ps2.image-ui.js` |

@@ -4,13 +4,18 @@ const REFERENCE = "Actor Reference";
 const LEGACY_DAUGHTER = "Daughter (custom name)";
 const gamePrompt = "Fantasy life sim with family, school, work, and court scenes. Use Actor Reference for names, pronouns, and register. Keep choices and effects unambiguous, follow the project glossary, and reveal relationships only when the scene does. Localize expressive dialogue glyphs ㌍ and ㍍ by emotion.";
 const previousEnginePrompt = "G2 and item text are CP932. Translations may be longer than the Japanese up to each row's byte limit; each line break uses two stored bytes. The message box shows three lines of about 34 half-width characters: rewrap dialogue freely within that, rather than matching the Japanese breaks. Keep labels and choices on one line, and keep printf widths and order (e.g. %2d). The game supplies speaker plates and player-chosen names separately.";
-const enginePrompt = previousEnginePrompt.replace("The game supplies speaker plates and player-chosen names separately.",
-    "Keep {{daughter}}, {{father}} and numbered {{strN}} placeholders exactly as written and in order. Move surrounding words as needed. The game fills in each value at runtime.");
+const variablesPrompt = "Keep {{daughter}}, {{father}} and numbered {{strN}} placeholders exactly as written and in order. Move surrounding words as needed. The game fills in each value at runtime.";
+const placeholderEnginePrompt = previousEnginePrompt.replace("The game supplies speaker plates and player-chosen names separately.", variablesPrompt);
+// The game never wraps a line itself, and export turns the page after every
+// third dialogue line (see paginate in pm4Ps2.module.js).
+const enginePrompt = "G2 and item text are CP932. Translations may be longer than the Japanese up to each row's byte limit; each line break uses two stored bytes. " +
+    "The game does not wrap lines, so break lines at about 34 half-width characters. A dialogue box shows three lines and longer dialogue continues on a new page after every third line: rewrap freely rather than matching the Japanese breaks. " +
+    "Keep labels and choices on one line, and keep printf widths and order (e.g. %2d). " + variablesPrompt;
 const legacyPattern = String.raw`%[-+0 #]*\d*(?:\.\d+)?[diuoxXfFeEgGcs%]|\\[^n]`;
 const variablePattern = String.raw`\{\{(?:daughter|father|str\d+)\}\}`;
 const controlPattern = legacyPattern + "|" + variablePattern;
 // Earlier add-on defaults, replaced automatically while still unedited.
-const legacyEnginePrompts = [previousEnginePrompt,
+const legacyEnginePrompts = [placeholderEnginePrompt, previousEnginePrompt,
     "G2 and item text use fixed CP932 slots. Each line break uses two stored bytes. Keep printf widths and order (e.g. %2d), and fit repeated text to its smallest slot. The game supplies speaker plates and player-chosen names separately. Shorten wording within the row; keep its original pages.",
     "G2 and item text are CP932. Translations may be longer than the Japanese up to each row's byte limit; each line break uses two stored bytes. Keep the source line count and printf widths and order (e.g. %2d). A dialogue line fits about 34 half-width characters, so balance long sentences across the existing lines. The game supplies speaker plates and player-chosen names separately."
 ];

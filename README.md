@@ -1,216 +1,115 @@
-# Princess Maker 4 — Japanese PS2 parser
+# Princess Maker 4 (PS2 & PC)
 
-Open a Japanese **SLPM_659.36** PS2 ISO in Translator++, translate its text, and
-export a separate disc image. The original ISO is read-only.
+A [Translator++](https://dreamsavior.net/docs/translator/) add-on for translating and modding both the Japanese PlayStation 2 (`SLPM_659.36`) and Windows PC (2005) releases of *Princess Maker 4*.
 
-1. Choose **New Project → Princess Maker 4 (PS2)** and select the `.iso`.
-2. Edit `ROOM.G2` (story and choices), `PRIME4.G2` (startup/system messages),
-   the item lists, and `SLPM_659.36` (memory-card, save and load prompts,
-   return to title, and birthdays). The original language is Japanese. The
-   initial target is English and can be changed in Translator++.
-3. Save the `.trans` project normally. Keep the original ISO at its selected
-   location: it is required for export and project updates.
-4. Use **Export → Folder** to create `<original>.translated.iso` in the output
-   folder. ZIP export wraps that ISO in a ZIP. **Inject** also creates a separate
-   ISO in the destination folder; it does not overwrite the source disc.
-   Existing exports get numbered filenames.
+> **Note:** This repository provides the parser and build tools, not a pre-made English patch. You will need your own clean Japanese PS2 ISO (`SLPM_659.36`) or Japanese PC release.
 
-Only checked/selected resources and the normal Translator++ row/tag filters are
-translated during text export. Image export follows the selected image files and
-their visible layers. Every other disc byte is copied from the original.
-The normal rightmost nonempty translation and context overrides are supported.
+![Princess Maker 4 title screen with the English main menu][cover]
 
-Use **Update Project from Source** to add `SLPM_659.36` to an existing
-project. These rows must fit the CP932 byte limit and original line count
-shown in the row notes. The shared birthday format must keep three decimal
-placeholders in year, month, day order. For example, `%d-%02d-%02d` produces
-`1430-04-13`.
+## Why
 
-New projects include an **Actor Reference** with editable name translations,
-pronouns, and short speech notes. AI translation can use the reference to
-identify speakers, including **Daughter**. Find the game's tone and storage
-guidance under **Translator → Prompts**.
+I’ve found that the AI-assisted MCP tools and skills in [Translator++](https://dreamsavior.net/docs/translator/) make retro game translation much faster and more affordable. I built this add-on so I could translate *Princess Maker 4* myself, write natural English without fighting Japanese byte limits, and leave the door open for other languages and artwork mods.
 
-## Text constraints
+The add-on handles PS2 disc structures, G2 bytecode relocation, PC GCEX archives, SPD/TIM2 texture sheets, and native name-entry tables automatically—so anyone who wants to localize the game or mod its graphics can focus on writing and art instead of binary patching.
 
-- **Translations can be longer than the Japanese.** The writer relocates the
-  script bytecode and fixes every offset in it: function entries, labels,
-  jumps, calls and choice-menu handlers. It then checks that the rebuilt script
-  is the same program as the original. Item lists are simply rebuilt.
-- Select a row to see its **CP932 limit** and the Japanese length in the grid
-  toolbar. ASCII normally costs one byte, Japanese two. The limits are set by
-  the game engine, not by the Japanese text:
+## Sample
 
-  | Text | Limit |
-  | --- | --- |
-  | Dialogue and item descriptions, up to 3 lines | 180 bytes |
-  | Longer messages (letters, endings) | twice the Japanese, up to 960 bytes |
-  | Choices, speaker names and other short strings | 24 bytes, or 1.5× the Japanese when longer |
-  | Item names | 18 bytes |
+<!-- On GitHub.com, replace the src below with a github.com/user-attachments/assets/... URL (drag an MP4 <= 10 MB into the GitHub web editor) to enable GitHub's inline video player -->
+<video src="showcase/english-sample.mp4" controls poster="showcase/shop.png" width="640">
+  <a href="showcase/english-sample.mp4">Watch / Download the English gameplay sample (MP4, 8:46)</a>
+</video>
 
-  A row whose Japanese is already longer keeps the Japanese length as its
-  limit. Overlong translations are refused before the ISO is created, with
-  their grid row numbers, byte counts and required reductions. Text is never
-  truncated.
-- **Line breaks are free.** The engine draws whatever `\n` breaks a line has,
-  so export never checks line counts. In the editor, a different line count,
-  moved blank lines and lines wider than about **34 half-width characters**
-  are warnings only. The box shows about 3 lines of that width. The width is
-  estimated from the Japanese and has not been measured in game; lines that
-  are too wide overflow the box. The grid shows real line breaks; the writer
-  restores the game's literal `\n` escapes.
-- Keep `%d`, `%2d`, `%3d`, and other placeholders in their original order.
-- Whenever text changes, export also raises the text windows' character
-  capacity in both game scripts. Japanese capacities crop English: the
-  dialogue window stopped after about 80 characters in PCSX2. It goes from
-  50 to 120 characters, and the six small windows (likely choices and
-  labels) go from 9 to 16. This uses a few hundred KB more console RAM.
-- A script that outgrows its disc sectors takes over the space of the
-  developer-only `TEST.G2`, and then `DEVTEST.G2`. Their directory entries
-  are set to empty, so only the developer menu loses them. If a project
-  includes those scripts and translates them, their space is not reused.
-  The ISO size never changes.
-- **Saves.** A save records a position inside the script. Saves from the
-  original disc or from an export with different text may not resume
-  correctly, so test on fresh saves.
-- Characters outside CP932, including emoji, accented letters and most
-  non-Japanese Asian scripts, are refused, and the error names each one.
-  Punctuation that Shift-JIS has under a different Unicode code point is
-  converted automatically: the em dash `—` becomes `―`, and likewise `〜`,
-  `‖`, `−`, `¢`, `£` and `¬`. CP932 representability does not establish that
-  a glyph exists in the game's font.
+![Patricia speaking natural English in her bedroom with full English UI and stats][dialogue]
 
-## Game artwork and PNG editing
+### 12-character English names (“Patricia Hywell”)
 
-By default, new projects include **80 editable interface sheets**. Turn on
-**Include all game artwork (including CGs)** to load all **1,263 sprite sheets**
-from the Japanese PS2 disc, including event and ending CGs, backgrounds,
-character art, portraits, and thumbnails. The OCR option applies to interface
-sheets. Game movies and fonts are outside this workflow.
+Enable the optional PS2 English keyboard on export to replace the kana screens with **ABC / abc**, digits, and punctuation. Its 12-character mode supports up to **12 half-width characters each** for both surname and given name—so you can use the daughter’s official name, **Patricia Hywell**, and see it carried into the status panel, save slots, and dialogue.
 
-In an existing project, choose **Tools → Princess Maker 4 (PS2) → Add all game
-artwork (without OCR)**. This adds missing sheets to the **Images** pane,
-including sheets without text, and keeps existing image edits and OCR boxes.
-**Add game images to this project** imports missing interface sheets with OCR.
-Use Image edit mode to draw or translate text boxes, or choose **Edit current
-image in Krita** to paint the whole sheet. Untranslated boxes preserve the
-source pixels.
+| Status screen (`Patricia Hywell`) | 12-character English name entry |
+| --- | --- |
+| ![English status screen displaying Patricia Hywell and localized stat labels][status] | ![Name-entry screen with Patricia Hywell entered on the 12-character English keyboard][name-entry] |
 
-For another image editor:
+### Relaxed text budgets & automatic multi-page messages
 
-1. Choose **Tools → Princess Maker 4 (PS2) → Export PNGs for editing** and an
-   empty folder. This exports the current compositions, with unchanged sheets
-   copied losslessly.
-2. Edit the PNGs, preserving their **filenames, dimensions and transparency**.
-   Save as **non-interlaced 8-bit RGB/RGBA PNG**. Only include the sheets you
-   changed in the re-import folder.
-3. Choose **Import edited PNGs** and that folder. The imported full sheets are
-   stored as replacement layers; the original layer is hidden to avoid doubled
-   alpha. The original PNG remains intact. Existing painted layers get backups.
-4. Save the `.trans` project. **Inject**, folder export and ZIP export repack the
-   edited sheets into their original SPD/TIM2 resources **inside the ISO**.
-   Resize, unsupported PNG or sprite format errors stop export rather than
-   relocating resources or writing loose PNGs beside the disc image.
+You don’t have to cram or abbreviate English to fit the original Japanese byte length. The writer relocates the G2 script bytecode, updates every internal offset, and enlarges the PS2 text and item-list buffers automatically—allowing up to **360 bytes per dialogue row** (~3 pages of English) while keeping the ISO size unchanged.
 
-Project update preserves image text, drawn boxes, styles and staged paint layers
-when the original sheet is unchanged. Save the previous project before updating
-if replacing the source disc with a different revision.
+*Princess Maker 4* displays **3 lines per dialogue box**. Whenever a translation runs longer than 3 lines, export automatically creates a new page with the same speaker preserved—the player simply presses a button to continue reading.
 
-Full PNG sheets—not independent cropped labels—are the editable unit, so sprite
-coordinates keep their original meaning. Schedule sheets contain every animation
-frame; edit repeated lettering in all frames.
+| Page 1 (3 lines fill the box) | Page 2 (auto-created continuation) |
+| --- | --- |
+| ![Leron speaking on page 1 with three full lines and the continue heart prompt][multipage-1] | ![Leron continuing seamlessly on page 2 with the same speaker plate and portrait][multipage-2] |
 
-## English name-entry keyboard
+### Supports both PS2 and PC releases
 
-In **Inject**, enable the **English name-entry keyboard** flipswitch to replace
-the two kana pages with **ABC / abc**, digits and punctuation. It is off by
-default. The patch changes both the pictures and the native input tables in the
-exported ISO, so the keys enter the characters shown on screen.
+One add-on covers both the PlayStation 2 disc and the 2005 Japanese Windows release, using the same script relocation, relaxed byte budgets, automatic multi-page splitting, and `{{daughter}}` / `{{father}}` runtime name placeholders.
 
-**Allow 12 half-width characters per name field** enables the English keyboard
-and supports up to 12 ASCII characters in both the surname and given name. The
-standard English keyboard supports six full-width characters per field. Use the
-on-screen controller keyboard to enter names.
+| Feature | PS2 (`SLPM_659.36`) | PC (2005 Japanese) |
+| --- | --- | --- |
+| Story, choices, items & relaxed byte budgets | Yes | Yes |
+| Automatic multi-page dialogue (> 3 lines) | Yes | Yes |
+| Enlarged text windows & 5-row shop item buffer | Automatic | Not needed (pixel box) |
+| Save / memory-card / system prompts (`SLPM_659.36`) | Yes | — |
+| 12-character English name-entry keyboard | Optional (Inject) | — |
+| Graphical UI & all 1,263 CG/sprite sheets | Yes (PNG / Krita) | — |
+| Safe non-destructive output | Separate `.translated.iso` | Rebuilds `script` (keeps `script.orig_backup`) |
 
-The switch applies to the whole output disc even when only some project files
-are selected. It replaces lettering in the key and bottom-button areas of
-`ENTRY2A.SPD` and `ENTRY2B.SPD`, including edits in those areas. The 12-character
-option also replaces the two name prompts in `ENTRY5.SPD`. Other image edits
-are retained. Turn it off to keep your own name-entry artwork and original kana
-input. Each Inject starts with the switch off, and the original ISO is unchanged.
+## Inside Translator++
 
-English name entry and subsequent display in the status panel and dialogue
-speaker plate have been confirmed by the user in PCSX2.
+### Graphical UI & interface sheets
 
-## Scope and limits
+New PS2 projects automatically extract **80 editable interface sheets** (menus, buttons, album screens, status labels) with optional OCR. Edit baked-in UI text directly in **Image Translator**, paint whole sheets in **Krita**, or export and re-import lossless PNGs.
 
-Default import has **10,657 distinct editable rows** across four resources on
-the inspected retail disc. Repeated text shares a row, with all occurrences and
-their byte limits retained. Verified speaker names appear in the expanded row
-headers. The parser tracks explicit name-plate commands across statements and
-voice calls, so tutorial dialogue such as the Cube status explanation is labelled
-`キューブ`. Repeated dialogue retains speaker information for each occurrence.
+![Album interface buttons translated in Translator++ Image Translator][ui-textures]
 
-Speaker coverage is partial. Known runtime variables display **Daughter (custom
-name)** and **Father (custom name)**, since the actual names depend on the player's
-save. Unknown variables, conflicting branch paths, and names after unverified
-native/script calls remain blank. `speakerKind` in
-row parameters distinguishes literal, runtime, cleared, and unknown names. This
-is conservative metadata extraction, not a complete execution of the game's VM.
+### Event CGs & game artwork for modding
 
-Resource paths and non-Japanese short engine strings are excluded. Bytecode symbols and album manifests are not
-translation targets.
+Enable **Include all game artwork (including CGs)**—or add them later from the **Tools** menu—to extract all **1,263 SPD/TIM2 sprite sheets** from the disc, including event and ending CGs, backgrounds, character sprites, and portraits. Edited PNGs are repacked directly into the exported ISO.
 
-The optional **Include TEST.G2 and DEVTEST.G2** setting imports development
-scripts too. It is off by default to avoid translating near-duplicate content,
-and so that their disc space stays available for longer translations.
+![Event CG LEV37 open inside Translator++ alongside the extracted artwork browser][cg-browser]
 
-This supports script text, picture-based lettering, and the optional name-entry
-keyboard table patch. Font replacement is not supported. The supplied `pm4-english-patch` research is
-for the PC edition: its GCEX archives, patch offsets, UI images, and executable
-patches cannot be applied directly to this PS2 disc. No PC translation data or
-game assets are bundled here.
+### Speaker context & AI prompts
 
-Exports are structurally verified. Only translated text resources can change
-size or position, and the ISO size never changes. The user has confirmed
-translated dialogue playback and English name entry in PCSX2. They also
-confirmed that a longer-than-Japanese dialogue line displays in full once the
-window capacity is raised; that line was too wide for the box. Broader testing
-of translated scenes, choices and edited artwork remains useful for checking
-layout and rendering throughout the game.
+New projects come pre-populated with an editable **Actor Reference** (names, pronouns, and speech guidance, including **Daughter**) and game-specific prompts under **Translator → Prompts** so Translator++’s AI translators and MCP workflow keep character voices consistent.
 
-## Development
+## Quick start
 
-`pm4Ps2.module.js` provides portable extraction, strict VM validation, relocating
-G2 rewriting with a same-program check, ISO discovery and extent planning,
-staging, and streamed ISO export. `pm4Ps2.js` supplies
-the project wizard, detector, AddonUtils hooks, and folder/ZIP/inject integration.
-`pm4Ps2.images.js` decodes/rebuilds SPD/TIM2 sheets and lossless PNGs;
-`pm4Ps2.keyboard.js` validates and replaces native keyboard tables and key labels;
-`pm4Ps2.image-ui.js` integrates the Images pane, OCR, paint-layer re-import and
-whole-disc image injection. Saved creation settings and the original ISO checksum
-live in `project.options.init`; text resources and decoded image sheets are staged.
+### 1. Install
+Requires Translator++ **8.11.9 or later** ([Download Translator++](https://dreamsavior.net/download)).
 
-Run from the repository root:
+* **Translator++ 8.11.25+:** Open **Options → Add-ons → Install → Community add-ons**, install **Princess Maker 4 (PS2 / PC) Parser**, and restart.
+* **Manual install:** Follow the steps in the [Pismax add-on catalog](https://github.com/pismax/tpp-addons#install).
 
-```powershell
-& '3rdParty/node-v24.17.0-win-x64/node.exe' --test www/addons/pm4Ps2/test/pm4Ps2.module.test.js www/addons/pm4Ps2/test/pm4Ps2.images.test.js www/addons/pm4Ps2/test/pm4Ps2.keyboard.test.js
-```
+### 2. Create a project
+Prepare a clean Japanese PS2 ISO (`SLPM_659.36`) or a clean Japanese PC release folder.
 
-Tests generate original synthetic G2/ISO fixtures; no retail game content is
-included. The optional worker is a source-development helper and is excluded
-from compiled packages. The app integration uses the module directly.
+1. Select **New Project → Princess Maker 4 (PS2 / PC)**.
+2. Choose your `.iso` (PS2) or `PM4.exe` / game folder (PC).
+3. On PS2, 80 interface sheets are included by default; enable **Include all game artwork (including CGs)** if you also want all 1,263 sprite/CG sheets for editing or modding.
+4. Pick your target language using the standard Translator++ controls.
 
-See [format notes](plan/README.md) for measured PS2 details.
+### 3. Export and play
+* **PS2:** Use **Export → Folder**, **ZIP**, or **Inject** to build a separate `<original>.translated.iso` (the original ISO is never modified). In **Inject**, optionally enable the **English name-entry keyboard** and **Allow 12 half-width characters per name field**.
+* **PC:** Use **Inject** on the game folder to rebuild `script` (automatically backing up the original as `script.orig_backup`), or **Export → Folder** to output a `script` file you can copy in manually.
 
-### Player names inside dialogue
+## Translation & modding reference
 
-Translate the whole row around `{{daughter}}` or `{{father}}`. The game fills in
-the player's chosen name. Other direct string variables use their slot number,
-such as `{{str17}}`. Keep the placeholders exactly once per original occurrence,
-in their original order. You can move the words and line breaks around them.
-Export and Inject rebuild the script with its original variable commands.
+Detailed per-resource rules, byte limits, PC notes, and image workflows are documented in the **[Translation & Modding Guide](USAGE.md)**:
 
-For an existing project, use **Update Project from Source** after restarting
-Translator++. Existing translation columns for split fragments are combined
-around the placeholders. Review the resulting sentences for grammar.
+* **Text Constraints & Pagination:** Byte-limit table, G2 script relocation, automatic 3-line page turns, `{{daughter}}` / `{{father}}` placeholders, and CP932 punctuation handling.
+* **PC Release Details:** GCEX `script` rebuilding, `script.orig_backup` safety checks, locale notes, and PS2 vs. PC differences.
+* **English Keyboard:** Standard 6-character vs. 12-character half-width input modes and affected SPD sheets.
+* **Artwork & PNG Modding:** Image Translator, Krita editing, lossless PNG export/re-import, and ISO repacking rules.
+* **Development & Tests:** Module layout and automated verification suite.
+
+---
+
+*Independent community add-on. Not affiliated with Dreamsavior, GAINAX, or GeneX.*
+
+[cover]: showcase/cover.png
+[dialogue]: showcase/dialogue.png
+[status]: showcase/status.png
+[name-entry]: showcase/name-entry.jpg
+[multipage-1]: showcase/multipage-1.png
+[multipage-2]: showcase/multipage-2.png
+[ui-textures]: showcase/ui-textures.jpg
+[cg-browser]: showcase/cg-browser.jpg

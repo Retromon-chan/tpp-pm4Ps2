@@ -6,7 +6,7 @@ const {Worker} = require("node:worker_threads");
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const os = require("node:os");
-const {g2, longG2, iso, speakerG2} = require("./fixtures.cjs");
+const {g2, longG2, iso, speakerG2, pagedG2} = require("./fixtures.cjs");
 const parser = require("../pm4Ps2.module.js");
 const guidance = require("../pm4Ps2.guidance.js");
 // Fixture layout: DATA.BIN at outer sector 24, embedded image at +0x1800, root directory at its sector 20.
@@ -180,7 +180,7 @@ test("text window capacity is raised only on request and only at the known SetRe
     assert.throws(() => parser.verifyRelocation(b, output), /operand/);
 });
 test("byte limits allow longer English within the engine's window and buffer limits", () => {
-    assert.equal(parser.byteLimit("dialogue", 40, 2), 180);
+    assert.equal(parser.byteLimit("dialogue", 40, 2), 360);
     assert.equal(parser.byteLimit("dialogue", 294, 11), 588);
     assert.equal(parser.byteLimit("dialogue", 600, 12), 960);
     assert.equal(parser.byteLimit("short", 4), 24);
@@ -190,8 +190,8 @@ test("byte limits allow longer English within the engine's window and buffer lim
     assert.equal(parser.byteLimit("description", 40, 2), 180);
     const data = parser.dataset(g2(), "ROOM.G2");
     const dialogue = data.parameters[data.indexIds["こんにちは\n世界 %d"]][0];
-    assert.equal(dialogue.maxBytes, 180); assert.equal(dialogue.textKind, "dialogue");
-    assert.match(dialogue.rowInfoNote, /CP932 limit: 180 bytes \(Japanese: 19\); the box shows about 3 lines of 34/);
+    assert.equal(dialogue.maxBytes, 360); assert.equal(dialogue.textKind, "dialogue");
+    assert.match(dialogue.rowInfoNote, /CP932 limit: 360 bytes \(Japanese: 19\); the box shows 3 lines of about 34 .*continue on a new page/);
     assert.deepEqual(dialogue.translationConstraints, {maxCharsPerLine: 34});
     const label = data.parameters[data.indexIds["はい"]][0];
     assert.equal(label.maxBytes, 24); assert.equal(label.translationConstraints, undefined);
@@ -209,7 +209,7 @@ test("line count never blocks export; Translator++ only warns about lines and wi
     const text = translation => parser.readG2(parser.rebuildResource(b, "ROOM.G2", {translationPair: {[source]: translation}}))
         .strings.find(t => t.opcode === 1).text;
     assert.equal(text("Hello, world %d"), "Hello, world %d");
-    assert.equal(text("One\nTwo\nThree\nFour %d"), "One\nTwo\nThree\nFour %d");
+    assert.equal(text("One\nTwo\nThree %d"), "One\nTwo\nThree %d");
     assert.deepEqual(parser.validateResource(b, "ROOM.G2", {translationPair: {"はい": "Yes\nNo"}}), []);
     assert.equal(guidance.validationRules.lineCount, "warn");
     assert.equal(guidance.validationRules.blankLines, "warn");
@@ -222,6 +222,38 @@ test("line count never blocks export; Translator++ only warns about lines and wi
     project.options.validationPolicy.rules.lineCount = "block";
     assert.equal(guidance.relaxLineRules(project, save), false);
     assert.equal(project.options.validationPolicy.rules.lineCount, "block");
+});
+test("dialogue longer than three lines continues on new pages", () => {
+    assert.equal(parser.paginate("a\nb\nc\n", 3), "a\nb\nc\n");
+    assert.equal(parser.paginate("a\nb\nc\n\nd\ne\nf\ng\n", 3), "a\nb\nc\fd\ne\nf\fg\n");
+    const b = pagedG2(), program = buffer => parser.g2Program(buffer);
+    const listing = buffer => {
+        const {codeBase, instructions} = program(buffer);
+        return instructions.filter(i => i.op !== 0x21 && i.op !== 0x20).map(i => i.op === 1
+            ? require("iconv-lite").decode(parser.transformString(buffer.subarray(codeBase + i.offset + 5, codeBase + i.offset + i.size)), "cp932")
+            : i.op === 6 ? "ARGS" : i.op === 0x0e ? "RET" : i.op + ":" + i.value);
+    };
+    const rows = (...n) => n.map(i => "Row " + i).join("\n"), stats = {};
+    const output = parser.rebuildResource(b, "ROOM.G2", {stats, translationPair: {
+        "一行目\n二行目\n三行目": rows(1, 2, 3) + "\n\n" + rows(5, 6, 7, 8) + "\n",
+        "語り一\n語り二": rows(1, 2, 3, 4),
+        "名前は{{daughter}}です。": "A\nB\nC {{daughter}}\nD\nE\nF\nG"}});
+    const br = "\\n";
+    assert.deepEqual(listing(output), ["3:1", "9:" + program(output).instructions.find(i => i.op === 1).offset,
+        // The jump lands on the first page; page turns are ARGS + SYSCALL 0x1105.
+        "Row 1" + br + "Row 2" + br + "Row 3", "ARGS", "5:4357", "Row 5" + br + "Row 6" + br + "Row 7", "ARGS", "5:4357", "Row 8" + br,
+        "ARGS", "5:4357",
+        // A box built up over 0x1104 waits is not paged.
+        "Row 1" + br + "Row 2" + br + "Row 3" + br + "Row 4", "ARGS", "5:4356", br + "語り三", "ARGS", "5:4356", "ARGS", "5:4098",
+        // A page that starts right after the inline name turns before the next literal.
+        "A" + br + "B" + br + "C ", "ARGS", "66:2", "5:4106", "ARGS", "5:4357", "D" + br + "E" + br + "F", "ARGS", "5:4357", "G",
+        "ARGS", "5:4357", "RET"]);
+    assert.equal(stats.pagedMessages, 2);
+    // Each page must fit the message buffer; the whole message may not.
+    const line = n => "x".repeat(n), box = "一行目\n二行目\n三行目";
+    assert.throws(() => parser.rebuildResource(b, "ROOM.G2", {translationPair: {[box]: [line(400), line(400), line(400), "x"].join("\n")}}),
+        /a page of the translation uses 1204 CP932 bytes/);
+    assert.ok(parser.rebuildResource(b, "ROOM.G2", {translationPair: {[box]: [line(300), line(300), line(300), line(300)].join("\n")}}).length);
 });
 test("multiline translation preserves runtime escapes and placeholders", () => {
     const b = g2(), source = "こんにちは\n世界 %d";
@@ -254,7 +286,7 @@ test("preflight collects every invalid row with readable row numbers and all dup
 });
 test("over-limit text and stray control characters are warnings, not export errors", () => {
     const b = g2(), warnings = [], options = {translationPair: {
-        "こんにちは\n世界 %d": "A".repeat(100) + "\n" + "B".repeat(90) + " %d",
+        "こんにちは\n世界 %d": "A".repeat(200) + "\n" + "B".repeat(190) + " %d",
         "はい": "Certainly, at once, my lord",
         "アリス": "Ali\u0007ce"
     }, warnings};
@@ -262,7 +294,7 @@ test("over-limit text and stray control characters are warnings, not export erro
     const output = parser.rebuildResource(b, "ROOM.G2", options);
     assert.deepEqual(warnings.map(w => w.row), [0, 1, 2]);
     assert.match(warnings[0].message, /removed an invisible control character/);
-    assert.match(warnings[1].message, /uses 195 CP932 bytes, over the recommended 180/);
+    assert.match(warnings[1].message, /uses 395 CP932 bytes, over the recommended 360/);
     assert.equal(warnings[2].contexts.length, 2);
     assert.equal(scriptStrings(output)[0], "Alice");
     assert.match(parser.warningLines(warnings)[2], /ROOM.G2: row 3 .*recommended 24/);

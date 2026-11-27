@@ -1,10 +1,10 @@
 {
   "name": "pm4Ps2",
-  "title": "Princess Maker 4 (PS2) Parser",
-  "description": "Translate Japanese PS2 Princess Maker 4 text, mod CGs and other artwork, and export a separate patched ISO with an optional English name-entry keyboard.",
+  "title": "Princess Maker 4 (PS2 / PC) Parser",
+  "description": "Translate Japanese Princess Maker 4: the PS2 disc (text, CGs and other artwork, optional English name-entry keyboard; exports a separate patched ISO) or the PC release (text; installs a rebuilt script archive and keeps the original).",
   "main": "pm4Ps2.js",
   "homepage": "https://github.com/pismax",
-  "version": "0.6.1",
+  "version": "0.7.0",
   "icon": "icon-portrait.png",
   "author": {
     "name": "pismax"
@@ -17,6 +17,7 @@
   "compile": {
     "modules": [
       "pm4Ps2.module.js",
+      "pm4Ps2.gcex.js",
       "pm4Ps2.images.js",
       "pm4Ps2.keyboard.js",
       "pm4Ps2.image-ui.js",
@@ -30,6 +31,7 @@
     "showcase/**",
     "AGENTS.md",
     "README.md",
+    "USAGE.md",
     "pm4Ps2.worker.js"
   ]
 }

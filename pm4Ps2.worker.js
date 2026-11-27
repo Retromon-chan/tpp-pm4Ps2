@@ -13,7 +13,7 @@ if (!isMainThread) {
                 case "ping": result = "ok"; break;
                 case "scan": {
                     const project = await parser.pm4Ps2Project.scan(workerData.sourceDir, workerData.options);
-                    result = {sourceDir: project.sourceDir, files: project.files, manifest: project.manifest, isoPath: project.isoPath};
+                    result = {sourceDir: project.sourceDir, files: project.files, manifest: project.manifest, isoPath: project.isoPath, gameFolder: project.gameFolder, platform: project.platform};
                     break;
                 }
                 case "parse":

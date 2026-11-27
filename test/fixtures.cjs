@@ -8,12 +8,13 @@ const str = (code, text) => {const b = iconv.encode(text, "cp932"); return Buffe
 // Header: magic, 0x1B, statement count, symbol count, then per symbol
 // [code offset][length][name], then [label count][labels]. Code offsets are
 // relative to the byte after the 0x1B that starts the code.
-function g2() {
+// newline: how a script stores a line break, "\\n" text (PS2) or "\n" (PC).
+function g2(newline = "\\n") {
     const header = Buffer.alloc(17); header.write("G2CD0460"); header[8] = 0x1b;
     header.writeUInt32LE(7, 9); header.writeUInt32LE(1, 13);
     const head = [Buffer.from([0x1b]), op(0x20, 1), op(0x20, 2), op(0x21, 3), Buffer.from([6]),
         op(3, 1), str(2, "アリス"), op(5, 0x2100),
-        op(0x21, 4), Buffer.from([6]), str(2, "0001"), op(5, 0x1620), str(1, "こんにちは\\n世界 %d"), op(5, 99)];
+        op(0x21, 4), Buffer.from([6]), str(2, "0001"), op(5, 0x1620), str(1, "こんにちは" + newline + "世界 %d"), op(5, 99)];
     const target = Buffer.concat(head).length - 1; // statement 5, after the dialogue
     const code = Buffer.concat([...head,
         op(0x21, 5), str(2, "はい"), op(0x21, 6), str(2, "はい"), str(2, "gd/sys/example.spd"),
@@ -48,7 +49,10 @@ function filesystem(buffer, base, files) {
     for (const f of files) {const r = dirRecord(f.name + ";1", f.lba, f.bytes.length); r.copy(buffer, p); p += r.length; f.bytes.copy(buffer, base + f.lba * sector);}
 }
 function iso(options = {}) {
-    const b = Buffer.alloc((options.keyboard ? 1700 : 160) * 2048, 0), cvm = Buffer.alloc((options.keyboard ? 1600 : 100) * 2048);
+    const elf = options.elf || (options.keyboard ? keyboardElf() : null);
+    const elfSectors = elf ? Math.ceil(elf.length / 2048) : 0;
+    const tail = options.keyboard ? 1640 + Math.max(50, elfSectors + 4) : 150;
+    const b = Buffer.alloc((tail + 10) * 2048, 0), cvm = Buffer.alloc((options.keyboard ? 1600 : 100) * 2048);
     cvm.write("CVMH");
     // longRoom: a multi-sector ROOM.G2 followed by a debug TEST.G2 (unless noTestScript).
     const files = [
@@ -63,9 +67,9 @@ function iso(options = {}) {
     if (options.keyboard) files.push({name: "ENTRY2A.SPD", lba: 60, bytes: spd(640, 448)}, {name: "ENTRY2B.SPD", lba: 630, bytes: spd(640, 448)});
     filesystem(cvm, 0x1800, files);
     const outer = [{name: "SYSTEM.CNF", lba: 22, bytes: Buffer.from("BOOT2 = cdrom0:\\SLPM_659.36;1\r\n")}, {name: "DATA.BIN", lba: 24, bytes: cvm}];
-    if (options.keyboard) outer.push({name: "SLPM_659.36", lba: 1640, bytes: keyboardElf()});
+    if (elf) outer.push({name: "SLPM_659.36", lba: 1640, bytes: elf});
     filesystem(b, 0, outer);
-    b.fill(0x5a, (options.keyboard ? 1690 : 150) * 2048); // unrelated bytes must survive exports
+    b.fill(0x5a, tail * 2048); // unrelated bytes must survive exports
     return b;
 }
 // Control-flow/name fixtures use explicit statements and labels, not game bytes.
@@ -117,6 +121,25 @@ function speakerG2() {
     const header = Buffer.alloc(21); header.write("G2CD0460"); header[8] = 0x1b; header.writeUInt32LE(statement + 1, 9);
     return Buffer.concat([header, word(0), code]);
 }
+// Message boxes as the game writes them: a box closed by a page wait (0x1105)
+// and reached by a jump, a narration box built up over waits that do not clear
+// (0x1104), and a line with the daughter's name printed inline.
+function pagedG2(newline = "\\n") {
+    const chunks = [Buffer.from([0x1b]), op(0x20, 1), op(0x20, 2)];
+    let statement = 2;
+    const offset = () => Buffer.concat(chunks).length - 1;
+    const stmt = (...bytes) => chunks.push(op(0x21, ++statement), ...bytes);
+    const wait = id => stmt(Buffer.from([6]), op(5, id));
+    const lines = (...rows) => rows.join(newline);
+    const jump = op(9, 0); stmt(op(3, 1), jump);
+    stmt(); jump.writeUInt32LE(offset(), 1); chunks.push(str(1, lines("一行目", "二行目", "三行目"))); wait(0x1105);
+    stmt(str(1, lines("語り一", "語り二"))); wait(0x1104);
+    stmt(str(1, lines("", "語り三"))); wait(0x1104); wait(0x1002);
+    stmt(str(1, "名前は")); stmt(Buffer.from([6]), op(0x42, 2), op(5, 0x100a), str(1, "です。")); wait(0x1105);
+    stmt(Buffer.from([0x0e]));
+    const header = Buffer.alloc(21); header.write("G2CD0460"); header[8] = 0x1b; header.writeUInt32LE(statement + 1, 9);
+    return Buffer.concat([header, ...chunks]);
+}
 function spd(width = 517, height = 300) {
     const columns = Math.ceil(width / 256), rows = Math.ceil(height / 256), pictures = [];
     for (let x = 0; x < columns; x++) for (let y = 0; y < rows; y++) {
@@ -143,4 +166,63 @@ function keyboardElf() {
     iconv.encode("ａｂｃｄｅｆｇｈｉｊｋｌｍｎｏｐｑｒｓｔｕｖｗｘｙｚ", "cp932").copy(b, 768);
     iconv.encode("０１２３４５６７８９", "cp932").copy(b, 832); return b;
 }
-module.exports = {g2, longG2, iso, speakerG2, spd, keyboardElf};
+// A GCE1 block from a small greedy LZP encoder, written independently of the
+// add-on's decoder: the match position is predicted from the last two bytes,
+// so a match is only a length. Codes are k zero bits, a one, then k-1 bits.
+function gce1(data) {
+    const table = new Int32Array(65536).fill(-1), literals = [], bits = [];
+    const gamma = v => {
+        if (v === 0) { bits.push(1); return; }
+        const k = v.toString(2).length;
+        for (let j = 0; j < k; j++) bits.push(0);
+        bits.push(1); for (let j = k - 2; j >= 0; j--) bits.push((v >> j) & 1);
+    };
+    let h = 0, i = 0, run = [];
+    const advance = () => { table[h] = i; h = ((h & 255) << 8) | data[i]; i++; };
+    while (i < data.length) {
+        const pos = table[h]; let length = 0;
+        if (pos >= 0) while (i + length < data.length && data[pos + length] === data[i + length]) length++;
+        if (!length) { run.push(data[i]); advance(); continue; }
+        gamma(run.length); literals.push(...run); run = [];
+        gamma(length - 1); for (let j = 0; j < length; j++) advance();
+    }
+    if (run.length) { gamma(run.length); literals.push(...run); }
+    const control = Buffer.alloc(Math.ceil(bits.length / 8));
+    bits.forEach((bit, j) => { if (bit) control[j >> 3] |= 0x80 >> (j & 7); });
+    const head = Buffer.alloc(0x18); head.write("GCE1");
+    head.writeUInt32LE(data.length, 4); head.writeUInt32LE(literals.length, 12); head.writeUInt32LE(literals.length, 16); head.writeUInt32LE(control.length, 20);
+    return Buffer.concat([head, Buffer.from(literals), control]);
+}
+// A GCEX archive. entries: [[name, bytes]]. Chained archives (flag 0x10, like
+// `script`) store GCE1 blocks of blockSize bytes; others store raw entries.
+function gcex(entries, {chained = true, blockSize = 0x40000} = {}) {
+    const zlib = require("zlib"), bodies = [], records = [];
+    for (const [name, data] of entries) {
+        const blocks = [];
+        for (let p = 0; chained && p < data.length; p += blockSize) blocks.push(gce1(data.subarray(p, p + blockSize)));
+        const body = chained ? Buffer.concat(blocks) : data, record = Buffer.alloc(32);
+        record.writeUInt32LE(zlib.crc32 ? zlib.crc32(name) : name.length, 0); record.writeUInt32LE(0x20, 4);
+        record.writeBigUInt64LE(BigInt(data.length), 0x10); record.writeBigUInt64LE(BigInt(body.length), 0x18);
+        bodies.push(body); records.push(record);
+    }
+    const names = Buffer.concat(entries.map(([name]) => { const b = Buffer.alloc(2 + name.length); b.writeUInt16LE(name.length); b.write(name, 2, "latin1"); return b; }));
+    const index = Buffer.concat([Buffer.alloc(0x20), ...records, names]);
+    index.write("GCE3"); index.writeUInt32LE(chained ? 0x10 : 0, 4); index.writeUInt32LE(index.length, 8); index.writeUInt32LE(entries.length, 0x18);
+    const {crc32} = require("../pm4Ps2.gcex.js"); index.writeUInt32LE(crc32(index), 0x14);
+    const head = Buffer.alloc(16); head.write("GCEX");
+    head.writeBigUInt64LE(BigInt(16 + bodies.reduce((total, body) => total + body.length, 0)), 8);
+    return Buffer.concat([head, ...bodies, index]);
+}
+// The `script` archive of a PC game folder: line feeds in the scripts, and
+// entries the exporter must keep byte for byte.
+function pcScript() {
+    return gcex([
+        ["album.txt", Buffer.from("EVENT\r\nGD\\EV\\E01.SPD\r\n".repeat(20))],
+        ["item_msg.txt", iconv.encode("\r\n強い剣\\n重い\r\n強い盾\r\n", "cp932")],
+        ["item_nam.txt", iconv.encode("\r\n剣\r\n盾\r\n", "cp932")],
+        ["prime4.g2", g2("\n")],
+        ["prime4.g2m", Buffer.from("G2MM0460" + "\0".repeat(40))],
+        ["room.g2", pagedG2("\n")]
+    ], {blockSize: 96});
+}
+module.exports = {g2, longG2, iso, speakerG2, pagedG2, spd, keyboardElf, gce1, gcex, pcScript};

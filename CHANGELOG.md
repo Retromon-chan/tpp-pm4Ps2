@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.7.0 (2026-11-27)
+
+- Enlarged the PS2 shop and inventory item-list text buffer in `SLPM_659.36` when exporting translated item names, fixing cropping on the fifth visible item row.
+- Added the Japanese PC release. Choose `PM4.exe` in New Project to translate its story, choices and items with the same limits, pages and `{{daughter}}` placeholders. Inject into the game folder rebuilds the `script` archive and keeps the Japanese original as `script.orig_backup`; Export → Folder writes a `script` to copy in yourself. Artwork, system messages and the English keyboard remain PS2 only.
+- Dialogue longer than its 3-line box continues on new pages. The player presses a button to see the rest, with the same speaker, so translations no longer have to fit three lines. The Inject log says how many messages were split. Narration that builds up over several button presses is not split.
+- The dialogue limit is now 360 bytes, about three pages. Going over a limit is a warning, and only a page over 960 bytes stops export.
+- The AI prompt now says that the game never wraps lines, so translations must break lines at about 34 characters. An unedited earlier prompt is upgraded.
+- Updated `README.md` with gameplay video, showcase screenshots, and a separate `USAGE.md` reference guide.
+
 ## 0.6.1 (2026-11-26)
 
 - Added editable memory-card, save and load prompts, the return-to-title confirmation, and the date format shared by both birthdays. Use Update Project from Source to add `SLPM_659.36` to an existing project.

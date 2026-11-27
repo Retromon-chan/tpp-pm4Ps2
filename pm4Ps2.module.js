@@ -1,11 +1,13 @@
 "use strict";
-// Portable PS2 parser: no app globals, external executables, or PC patch data.
+// Portable parser for the Japanese PS2 disc and the Japanese PC release: no app
+// globals, external executables, or PC patch data.
 const fs = require("fs"), path = require("path"), os = require("os"), crypto = require("crypto");
 const {Transform} = require("stream");
 const {pipeline} = require("stream/promises");
 const iconv = require("iconv-lite");
 const imageCodec = require("./pm4Ps2.images.js");
 const keyboard = require("./pm4Ps2.keyboard.js");
+const gcex = require("./pm4Ps2.gcex.js");
 const SECTOR = 2048;
 const MAIN_FILES = ["ROOM.G2", "PRIME4.G2", "ITEM_NAM.TXT", "ITEM_MSG.TXT"];
 const TEST_FILES = ["TEST.G2", "DEVTEST.G2"];
@@ -281,7 +283,9 @@ function readItems(b) {
 // buffer at window+0x64 (strcpy/strcat at 0x16E5A0) are the hard limits. Long
 // multi-line messages are letters in the full-screen window. Short strings are
 // speaker plates and choices; item names share the item list's slot pool.
-const BYTE_LIMITS = {dialogue: 180, description: 180, short: 24, itemName: 18, longMessage: 960};
+// Dialogue over three rows continues on new pages (see paginate), so its limit
+// allows about three pages; each page still has to fit the box.
+const BYTE_LIMITS = {dialogue: 360, description: 180, short: 24, itemName: 18, longMessage: 960};
 function byteLimit(kind, byteLength, lines = 1) {
     if (kind === "nativeDate" || kind === "nativeDialog") return byteLength;
     if (kind === "dialogue" || kind === "description") {
@@ -293,10 +297,11 @@ function byteLimit(kind, byteLength, lines = 1) {
     if (kind === "short") return Math.max(byteLength, BYTE_LIMITS.short, Math.ceil(byteLength * 1.5));
     return Math.max(byteLength, BYTE_LIMITS[kind] ?? BYTE_LIMITS.short);
 }
-// Line breaks are plain `\n` text to the engine, so export never checks line
-// counts. The message box shows about three lines of ~34 half-width characters
-// (width estimated from the Japanese, not measured in game); Translator++ only
-// warns about line count, blank lines and width (see pm4Ps2.guidance.js).
+// Line breaks are plain `\n` text to the engine, so export never rejects a line
+// count. The message box shows three lines of ~34 half-width characters (width
+// estimated from the Japanese, not measured in game); export pages longer
+// dialogue, and Translator++ only warns about line count, blank lines and width
+// (see pm4Ps2.guidance.js).
 const LINE_WIDTH = 34;
 // Per-occurrence parameters for Translator++: the byte limit, and for wrappable
 // text a width guideline. Used by import and by project upgrades.
@@ -309,11 +314,43 @@ function occurrenceLimits(kind, byteLength, source) {
     }
     const maxBytes = byteLimit(kind, byteLength, source.split("\n").length);
     const wrappable = kind === "dialogue" || kind === "description";
+    const box = "the box shows 3 lines of about " + LINE_WIDTH + " half-width characters";
     return {maxBytes, textKind: kind,
         ...(wrappable ? {translationConstraints: {maxCharsPerLine: LINE_WIDTH}} : {}),
-        rowInfoNote: "CP932 limit: " + maxBytes + " bytes (Japanese: " + byteLength + "); " + (wrappable
-            ? "the box shows about 3 lines of " + LINE_WIDTH + " half-width characters; keep % codes."
-            : "keep % codes.")};
+        rowInfoNote: "CP932 limit: " + maxBytes + " bytes (Japanese: " + byteLength + "); " +
+            (kind === "dialogue" ? box + ", and every 3 more lines continue on a new page; keep % codes."
+                : wrappable ? box + "; keep % codes." : "keep % codes.")};
+}
+// Rows of text as the box counts them; trailing line breaks add none.
+function rowCount(text) {
+    const lines = text.split("\n");
+    while (lines.length && !lines[lines.length - 1]) lines.pop();
+    return lines.length;
+}
+// Returns the text with "\f" where a page turn replaces a line break: after
+// every `rows` rows. A page does not start with blank rows; trailing line
+// breaks stay on the last page.
+function paginate(text, rows) {
+    const lines = text.split("\n"), end = rowCount(text);
+    if (end <= rows) return text;
+    const pages = [[]];
+    for (let i = 0; i < end; i++) {
+        let page = pages[pages.length - 1];
+        if (page.length === rows) pages.push(page = []);
+        if (!page.length && pages.length > 1 && !lines[i]) continue;
+        page.push(lines[i]);
+    }
+    return pages.map(page => page.join("\n")).join("\f") + "\n".repeat(lines.length - end);
+}
+// A box built up over several key presses (0x1104) may hold more rows than one
+// message, so its messages are never paged. Looks at the next wait after `index`.
+function appendsToBox(instructions, index) {
+    for (let i = index + 1; i < instructions.length; i++) {
+        const {op, value} = instructions[i];
+        if (op === 5 && (value === WAIT_APPEND || value === WAIT_PAGE)) return value === WAIT_APPEND;
+        if (op === 1 || op === 0x0e || op === SKIP_OP || ABSOLUTE_OPS.has(op)) return false;
+    }
+    return false;
 }
 function textKind(name, token) {
     if (/^ITEM_MSG\.TXT$/i.test(name)) return "description";
@@ -350,17 +387,30 @@ function instructionIndex(program) {
     const index = new Map(program.instructions.map((insn, i) => [insn.offset, i]));
     index.set(program.end, program.instructions.length); return index;
 }
+// Instructions the exporter may insert: MSG text, and a page turn.
+function msgInstruction(bytes) {
+    const insn = Buffer.alloc(5 + bytes.length); insn[0] = 1; insn.writeUInt32LE(bytes.length, 1);
+    transformString(bytes, true).copy(insn, 5); return insn;
+}
+// Native 0x1105 (handler 0x1663A0) waits for a key, then clears the message box;
+// 0x1104 waits without clearing, so later text is appended. Every retail box
+// closed by 0x1105 holds at most three rows. The script writes `ARGS; SYSCALL`.
+const WAIT_APPEND = 0x1104, WAIT_PAGE = 0x1105, PAGE_ROWS = 3;
+const PAGE_BREAK = [Buffer.from([0x06]), Buffer.from([0x05, WAIT_PAGE & 255, WAIT_PAGE >> 8, 0, 0])];
 // texts: Map(absolute offset of a string's bytes -> new plain CP932 bytes).
 // constants: Map(code offset of a PUSHI -> new value).
+// insertions: Map(absolute offset of an instruction -> {before, after}), each a
+// list of encoded instructions (MSG or PAGE_BREAK only). Jumps to the
+// instruction land on the code inserted before it.
+const insertedSize = list => (list || []).reduce((total, insn) => total + insn.length, 0);
 function relocateG2(b, texts = new Map(), constants = new Map(), insertions = new Map()) {
     const program = g2Program(b), {codeBase} = program, remap = new Map(), sizes = [];
     let position = 0;
     for (const insn of program.instructions) {
         const text = STRING_OPS.has(insn.op) ? texts.get(codeBase + insn.offset + 5) : undefined;
-        const size = text ? 5 + text.length : insn.size;
-        remap.set(insn.offset, position); sizes.push(size); position += size;
-        const extra = insertions.get(codeBase + insn.offset);
-        if (extra) position += 5 + (extra.before || extra.after).length;
+        const size = text ? 5 + text.length : insn.size, extra = insertions.get(codeBase + insn.offset);
+        remap.set(insn.offset, position); sizes.push(size);
+        position += size + insertedSize(extra?.before) + insertedSize(extra?.after);
     }
     remap.set(program.end, position);
     const at = offset => { check(remap.has(offset), "G2 code offset " + offset + " is not an instruction boundary."); return remap.get(offset); };
@@ -368,13 +418,9 @@ function relocateG2(b, texts = new Map(), constants = new Map(), insertions = ne
     program.instructions.forEach((insn, i) => {
         const source = codeBase + insn.offset, extra = insertions.get(source);
         let w = remap.get(insn.offset);
-        if (extra) {
-            const bytes = extra.before || extra.after, dst = extra.before ? w : w + sizes[i];
-            code[dst] = 1;
-            code.writeUInt32LE(bytes.length, dst + 1);
-            transformString(bytes, true).copy(code, dst + 5);
-            if (extra.before) w += 5 + bytes.length;
-        }
+        for (const added of extra?.before || []) { added.copy(code, w); w += added.length; }
+        let after = w + sizes[i];
+        for (const added of extra?.after || []) { added.copy(code, after); after += added.length; }
         const text = STRING_OPS.has(insn.op) ? texts.get(source + 5) : undefined;
         if (text) { code[w] = insn.op; code.writeUInt32LE(text.length, w + 1); transformString(text, true).copy(code, w + 5); return; }
         b.copy(code, w, source, source + insn.size);
@@ -398,21 +444,25 @@ function relocateG2(b, texts = new Map(), constants = new Map(), insertions = ne
 function verifyRelocation(original, rebuilt, constants = new Map(), insertions = new Map()) {
     const a = g2Program(original), b = g2Program(rebuilt), ia = instructionIndex(a), ib = instructionIndex(b);
     const fail = message => { throw new Error("Rebuilt G2 verification failed: " + message); };
-    if (a.statementCount !== b.statementCount || a.instructions.length + insertions.size !== b.instructions.length) fail("instruction count");
+    let inserted = 0;
+    for (const extra of insertions.values()) inserted += (extra.before?.length || 0) + (extra.after?.length || 0);
+    if (a.statementCount !== b.statementCount || a.instructions.length + inserted !== b.instructions.length) fail("instruction count");
     if (a.symbols.length !== b.symbols.length || a.labels.length !== b.labels.length) fail("table sizes");
     const entries = [], originals = [];
     let cursor = 0;
-    function verifyExtra(bytes) {
-        const ins = b.instructions[cursor++];
-        if (ins?.op !== 1 || ins.value !== bytes.length ||
-            !rebuilt.subarray(b.codeBase + ins.offset + 5, b.codeBase + ins.offset + ins.size).equals(transformString(bytes, true))) fail("inserted dialogue");
+    function verifyExtra(list) {
+        for (const bytes of list || []) {
+            const ins = b.instructions[cursor++];
+            if (!ins || ![1, 5, 6].includes(ins.op) || (ins.op === 5 && ins.value !== WAIT_PAGE) ||
+                !rebuilt.subarray(b.codeBase + ins.offset, b.codeBase + ins.offset + ins.size).equals(bytes)) fail("inserted instruction");
+        }
     }
     for (const ins of a.instructions) {
         entries.push(cursor);
         const extra = insertions.get(a.codeBase + ins.offset);
-        if (extra?.before) verifyExtra(extra.before);
+        verifyExtra(extra?.before);
         originals.push(cursor++);
-        if (extra?.after) verifyExtra(extra.after);
+        verifyExtra(extra?.after);
     }
     entries.push(cursor);
     const same = (x, y) => ia.has(x) && ib.has(y) && entries[ia.get(x)] === ib.get(y);
@@ -438,6 +488,22 @@ const TEXT_WINDOWS = [
     {rect: [192, 350, 50, 0], characters: 120},   // dialogue window
     ...[[92, 317], [140, 214], [380, 214], [64, 243], [456, 243], [260, 193]].map(([x, y]) => ({rect: [x, y, 9, 0], characters: 16}))
 ];
+// ItemList::Init (0x156930) creates the 5-row shop/inventory TextLayer with
+// `addiu a2, zero, 50` at 0x1569c8 (file offset 0x56a48): 200 render slots and
+// a 105,472-byte font packet buffer, which overflows after ~41 visible
+// characters across the five rows. Raising it to 150 gives 600 slots and a
+// 310,272-byte buffer (matching the expanded dialogue window) so five long
+// English item names fit without cropping the last row.
+const ITEM_LIST_CAPACITY = {address: 0x1569c8, offset: 0x1569c8 - 0xfff80, original: 0x24060032, expanded: 0x24060096};
+function patchItemListCapacity(original, current = original) {
+    check(keyboard.isOriginalExecutable(original), "Item list window expansion requires the original " + EXECUTABLE + " executable.");
+    check(original.length >= ITEM_LIST_CAPACITY.offset + 4 &&
+        original.readUInt32LE(ITEM_LIST_CAPACITY.offset) === ITEM_LIST_CAPACITY.original,
+        "Unexpected item-list text capacity instruction at 0x" + ITEM_LIST_CAPACITY.address.toString(16) + ".");
+    const output = Buffer.from(current);
+    output.writeUInt32LE(ITEM_LIST_CAPACITY.expanded, ITEM_LIST_CAPACITY.offset);
+    return output;
+}
 function textWindowConstants(b) {
     const {instructions} = g2Program(b), found = new Map();
     for (let i = 4; i < instructions.length; i++) {
@@ -513,6 +579,29 @@ const CONTROL_CHARACTERS = /[\x00-\x08\x0b\x0c\x0e-\x1f]/g;
 function resourceChanges(b, name, options = {}) {
     if (name === EXECUTABLE) return nativeTextChanges(b, options);
     const changes = new Map(), insertions = new Map(), issues = [], warnings = [], rows = new Map(), unique = new Map();
+    const isG2 = /\.G2$/i.test(name), program = isG2 ? g2Program(b) : null, resource = readResource(b, name);
+    // The PS2 scripts store a line break as the two characters `\` `n`; the PC
+    // scripts store a line feed byte. Item lists use `\n` text on both.
+    const lineFeeds = isG2 && resource.strings.some(token => [token, ...(token.parts || []).map(part => part.token)]
+        .some(part => part?.rawText?.includes("\n")));
+    let pagedMessages = 0;
+    const instructionAt = program ? new Map(program.instructions.map((insn, i) => [program.codeBase + insn.offset, i])) : null;
+    // Places one literal piece of a message, split into pages, at an existing
+    // MSG (message: its string offset) or next to another instruction.
+    function insert(offset, side, list) {
+        if (!list.length) return;
+        const extra = insertions.get(offset) || {}; extra[side] = [...(extra[side] || []), ...list]; insertions.set(offset, extra);
+    }
+    function pageItems(segments) {
+        return segments.flatMap((segment, i) => [...(i ? PAGE_BREAK : []), ...(segment.length ? [msgInstruction(segment)] : [])]);
+    }
+    function placeMessage(message, segments) {
+        const main = Math.max(0, segments.findIndex(segment => segment.length));
+        changes.set(message, segments[main]);
+        // Page turns before the first non-empty page, then the remaining pages.
+        insert(message - 5, "before", Array.from({length: main}, () => PAGE_BREAK).flat());
+        insert(message - 5, "after", pageItems([Buffer.alloc(0), ...segments.slice(main + 1)]));
+    }
     function report(list, token, row, target, bytes, message) {
         const key = JSON.stringify([list === issues, row, target, message]), existing = unique.get(key);
         if (existing) { existing.contexts.push(token.context.join("/")); return; }
@@ -520,7 +609,7 @@ function resourceChanges(b, name, options = {}) {
             context: token.context.join("/"), contexts: [token.context.join("/")], message};
         list.push(entry); unique.set(key, entry);
     }
-    for (const token of readResource(b, name).strings) {
+    for (const token of resource.strings) {
         if (!rows.has(token.text)) rows.set(token.text, rows.size);
         const row = rows.get(token.text);
         let target = display(lookup(token, options)); if (target === token.text) continue;
@@ -529,39 +618,52 @@ function resourceChanges(b, name, options = {}) {
         if (CONTROL_CHARACTERS.test(target)) { target = target.replace(CONTROL_CHARACTERS, ""); notes.push("removed an invisible control character"); }
         if (JSON.stringify(codes(target)) !== JSON.stringify(codes(token.text))) errors.push("preserve % placeholders and control codes in order");
         const markers = token.parts?.filter(p => p.marker) || [];
-        const pieces = target.split(/(\{\{[^{}\n]*\}\})/g);
+        // Dialogue continues on a new page after every PAGE_ROWS rows (or after
+        // as many rows as the Japanese message already has).
+        let paged = target;
+        if (isG2 && token.opcode === 1) {
+            const last = token.parts?.[token.parts.length - 1];
+            const end = instructionAt.get(last ? (last.token ? last.token.offset - 5 : last.call) : token.offset - 5);
+            if (!appendsToBox(program.instructions, end)) paged = paginate(target, Math.max(PAGE_ROWS, rowCount(token.text)));
+        }
+        const pieces = paged.split(/(\{\{[^{}\n]*\}\})/g);
         if (pieces.some((s, i) => i % 2 === 0 && /\{\{|\}\}/.test(s)) ||
             JSON.stringify(pieces.filter((_, i) => i % 2)) !== JSON.stringify(markers.map(p => p.marker))) {
             errors.push("preserve the runtime variable placeholders in order: " + markers.map(p => p.marker).join(" "));
         }
-        let bytes, chunks;
+        const encode = s => strictEncode(lineFeeds ? s : s.replace(/\n/g, "\\n"));
+        let bytes, chunks, largestPage = 0;
         try {
-            chunks = pieces.filter((_, i) => i % 2 === 0).map(s => strictEncode(s.replace(/\n/g, "\\n")));
-            bytes = Buffer.concat(chunks);
+            chunks = pieces.filter((_, i) => i % 2 === 0).map(s => s.split("\f").map(encode));
+            bytes = Buffer.concat(chunks.flat());
+            for (const page of paged.split("\f")) largestPage = Math.max(largestPage, encode(page.replace(/\{\{[^{}\n]*\}\}/g, "")).length);
         } catch (e) { errors.push(e.message); }
-        if (bytes && bytes.length > HARD_BYTE_LIMIT) {
-            errors.push("translation uses " + bytes.length + " CP932 bytes; maximum is " + HARD_BYTE_LIMIT + " (the message buffer; shorten by " + (bytes.length - HARD_BYTE_LIMIT) + " bytes)");
+        if (bytes && largestPage > HARD_BYTE_LIMIT) {
+            errors.push((paged === target ? "translation" : "a page of the translation") + " uses " + largestPage + " CP932 bytes; maximum is " +
+                HARD_BYTE_LIMIT + " (the message buffer; shorten by " + (largestPage - HARD_BYTE_LIMIT) + " bytes)");
         } else if (bytes && bytes.length > token.maxBytes) {
             notes.push("uses " + bytes.length + " CP932 bytes, over the recommended " + token.maxBytes + "; it may not fit its box");
         }
         if (errors.length) { report(issues, token, row, target, bytes, errors.join("; ")); continue; }
         if (notes.length) report(warnings, token, row, target, bytes, notes.join("; "));
-        if (!markers.length) changes.set(/\.G2$/i.test(name) ? token.offset : token.line, bytes);
+        if (paged !== target) pagedMessages++;
+        if (!isG2) changes.set(token.line, bytes);
+        else if (!markers.length) placeMessage(token.offset, chunks[0]);
         else {
             let index = 0;
             for (let i = 0; i < token.parts.length; i++) {
                 const part = token.parts[i];
                 if (part.token) {
-                    changes.set(part.token.offset, chunks[index]);
+                    placeMessage(part.token.offset, chunks[index]);
                     continue;
                 }
-                if (i === 0 && chunks[index].length) insertions.set(part.start, {before: chunks[index]});
+                if (i === 0) insert(part.start, "before", pageItems(chunks[index]));
                 index++;
-                if (!token.parts[i + 1]?.token && chunks[index].length) insertions.set(part.call, {after: chunks[index]});
+                if (!token.parts[i + 1]?.token) insert(part.call, "after", pageItems(chunks[index]));
             }
         }
     }
-    return {changes, insertions, issues, warnings};
+    return {changes, insertions, issues, warnings, pagedMessages};
 }
 function warningLines(warnings, limit = 50) {
     const lines = warnings.slice(0, limit).map(w => w.file + ": row " + (w.row + 1) + " (" + w.context + "): " + w.message + ".");
@@ -578,10 +680,12 @@ function validateResource(b, name, options = {}) { return resourceChanges(b, nam
 function resourceWarnings(b, name, options = {}) { return resourceChanges(b, name, options).warnings; }
 // Translations may be longer or shorter than the Japanese. G2 bytecode is
 // relocated and verified; item lists are rejoined with their CRLF structure.
-// expandTextWindows also raises the text windows' character capacity.
+// Dialogue longer than its box gets page turns. expandTextWindows also raises
+// the text windows' character capacity. options.stats counts paged messages.
 function rebuildResource(b, name, options = {}) {
-    const {changes, insertions, issues, warnings} = resourceChanges(b, name, options);
+    const {changes, insertions, issues, warnings, pagedMessages} = resourceChanges(b, name, options);
     if (Array.isArray(options.warnings)) options.warnings.push(...warnings);
+    if (options.stats) options.stats.pagedMessages = (options.stats.pagedMessages || 0) + pagedMessages;
     if (issues.length) throw translationError(issues);
     if (name === EXECUTABLE) {
         const output = Buffer.from(b);
@@ -772,8 +876,119 @@ async function extractImages(isoPath, destinationDir, options = {}) {
     } finally { await handle.close(); }
     return {manifest, files};
 }
+// ---- Japanese PC release (2005): the game folder's `script` GCEX archive ----
+// It holds the same G2CD0460 scripts and item lists as the PS2 disc, with
+// lower-case names. Export rewrites only `script`; it keeps the Japanese
+// original as `script.orig_backup` (the name the community English patch uses
+// too) and reads the original from there on later exports.
+const PC_ARCHIVE = "script", PC_BACKUP = "script.orig_backup";
+const PC_FILES = ["room.g2", "prime4.g2", "item_nam.txt", "item_msg.txt"];
+const isPcEntryPoint = entryPoint => !/\.iso$/i.test(String(entryPoint));
+const exists = file => fs.promises.access(file).then(() => true, () => false);
+async function pcGameFolder(entryPoint) {
+    const resolved = path.resolve(entryPoint);
+    return (await fs.promises.stat(resolved)).isDirectory() ? resolved : path.dirname(resolved);
+}
+// The original archive: script.orig_backup when an earlier install kept one,
+// otherwise script. With a checksum, only the matching file is accepted.
+async function readPcArchive(folder, expectedSha256) {
+    for (const name of [PC_BACKUP, PC_ARCHIVE]) {
+        let buffer;
+        try { buffer = await fs.promises.readFile(path.join(folder, name)); } catch (error) { if (error.code === "ENOENT") continue; throw error; }
+        const sha256 = hash(buffer);
+        if (!expectedSha256 || sha256 === expectedSha256) return {name, buffer, sha256};
+    }
+    check(!expectedSha256, "The original Japanese 'script' archive of this project is not in " + folder +
+        " (looked for " + PC_BACKUP + " and " + PC_ARCHIVE + "). Restore it, or update the project from source.");
+    throw new Error("No 'script' archive in " + folder + ". Choose PM4.exe or the folder of the Japanese PC release.");
+}
+async function inspectPcGame(entryPoint) {
+    const folder = await pcGameFolder(entryPoint), source = await readPcArchive(folder);
+    const archive = gcex.parseArchive(source.buffer), resources = [], data = new Map();
+    let rows = 0, japaneseRows = 0;
+    for (const name of PC_FILES) {
+        const entry = archive.entries.find(e => e.name === name);
+        check(entry, "The script archive has no " + name + "; this is not the Japanese PC release of Princess Maker 4.");
+        const b = gcex.unpackEntry(source.buffer, archive, entry), result = readResource(b, name);
+        if (name === "room.g2") for (const token of result.strings) if (token.opcode === 1) { rows++; if (japanese(token.text)) japaneseRows++; }
+        resources.push({name, size: b.length, sha256: hash(b)}); data.set(name, b);
+    }
+    check(japaneseRows * 2 > rows, "The story in " + path.join(folder, source.name) +
+        " is not Japanese. It may already be translated: put the original Japanese 'script' back first.");
+    return {folder, data, manifest: {format: 1, platform: "pc", archive: source.name, archiveSize: source.buffer.length, archiveSha256: source.sha256, resources}};
+}
+async function detectpm4Pc(entryPoint) { try { await inspectPcGame(entryPoint); return true; } catch (_) { return false; } }
+// Writes `script` into a directory through a temporary file. A Japanese original
+// already there is first copied to script.orig_backup. In a game folder, a
+// changed `script` without that backup is never replaced.
+async function installPcArchive(directory, output, originalSha256) {
+    await fs.promises.mkdir(directory, {recursive: true});
+    const target = path.join(directory, PC_ARCHIVE), backup = path.join(directory, PC_BACKUP);
+    let backedUp = false;
+    if (await exists(target)) {
+        const original = await hashFile(target) === originalSha256, hasBackup = await exists(backup);
+        if (original && hasBackup) {
+            check(await hashFile(backup) === originalSha256, PC_BACKUP + " in " + directory + " is not the Japanese original. Move it away so the original 'script' can be kept as the backup.");
+        } else if (original) {
+            await fs.promises.copyFile(target, backup, fs.constants.COPYFILE_EXCL);
+            check(await hashFile(backup) === originalSha256, "Could not back up the original 'script' in " + directory + ".");
+            backedUp = true;
+        } else if (!hasBackup) {
+            const gameFolder = await exists(path.join(directory, "gd")) || (await fs.promises.readdir(directory)).some(n => /\.exe$/i.test(n));
+            check(!gameFolder, "'script' in " + directory + " is not the Japanese original and has no " + PC_BACKUP +
+                " beside it. Put the original 'script' back first, so that it can be kept as the backup.");
+        }
+    }
+    const temporary = target + "." + crypto.randomBytes(6).toString("hex") + ".partial";
+    try {
+        await fs.promises.writeFile(temporary, output, {flag: "wx"});
+        try { await fs.promises.rename(temporary, target); } catch (error) {
+            if (["EPERM", "EBUSY", "EACCES"].includes(error.code)) throw new Error("Cannot replace " + target + " while it is in use. Close Princess Maker 4 and try again.");
+            throw error;
+        }
+    } finally { await fs.promises.unlink(temporary).catch(() => {}); }
+    check((await fs.promises.readFile(target)).equals(output), "Installed archive verification failed: " + target);
+    return {path: target, backup: backedUp ? backup : undefined};
+}
+// Rebuilds `script` from the project's original archive and installs it in
+// destinationDir (the game folder for Inject). Translated scripts are relocated
+// and verified as for the PS2 disc, and stored as uncompressed GCE0 blocks.
+async function exportPcGame(gameFolder, destinationDir, options = {}) {
+    const expected = options.manifest;
+    check(expected?.platform === "pc" && /^[a-f0-9]{64}$/.test(expected.archiveSha256 || ""), "Project source manifest is missing. Recreate this project.");
+    const source = await readPcArchive(await pcGameFolder(gameFolder), expected.archiveSha256), archive = gcex.parseArchive(source.buffer);
+    const originals = new Map(), replacements = new Map(), issues = [], warnings = [], stats = {pagedMessages: 0};
+    for (const entry of archive.entries) originals.set(entry.name, gcex.unpackEntry(source.buffer, archive, entry));
+    for (const record of expected.resources) {
+        const original = originals.get(record.name);
+        check(original && hash(original) === record.sha256, "The source archive no longer matches this project: " + record.name);
+        const selected = options.translations?.[record.name]; if (!selected) continue;
+        try {
+            const output = rebuildResource(original, record.name, {...selected, warnings, stats});
+            if (!output.equals(original)) replacements.set(record.name, output);
+        } catch (error) {
+            if (error.name !== "PM4TranslationError") throw error;
+            issues.push(...error.issues);
+        }
+    }
+    if (issues.length) throw translationError(issues);
+    const output = gcex.buildArchive(source.buffer, replacements), rebuilt = gcex.parseArchive(output);
+    for (const entry of rebuilt.entries) {
+        check(gcex.unpackEntry(output, rebuilt, entry).equals(replacements.get(entry.name) || originals.get(entry.name)), "Rebuilt archive verification failed: " + entry.name);
+    }
+    const installed = await installPcArchive(destinationDir, output, expected.archiveSha256);
+    return {path: installed.path, backup: installed.backup, patchedFiles: [...replacements.keys()], size: output.length,
+        pagedMessages: stats.pagedMessages, warnings, warningLines: warningLines(warnings)};
+}
 class pm4Ps2Project {
     static async scan(entryPoint, options = {}) {
+        if (isPcEntryPoint(entryPoint)) {
+            const {folder, data, manifest} = await inspectPcGame(entryPoint);
+            const sourceDir = options.stagingDir || await fs.promises.mkdtemp(path.join(os.tmpdir(), "tpp-pm4-"));
+            await fs.promises.mkdir(sourceDir, {recursive: true});
+            for (const [name, b] of data) await fs.promises.writeFile(path.join(sourceDir, name), b, {flag: "wx"});
+            return {sourceDir, files: [...data.keys()], manifest, gameFolder: folder, platform: "pc"};
+        }
         const isoPath = path.resolve(entryPoint), manifest = await inspectIso(isoPath, options.init || options);
         manifest.isoSha256 = await hashFile(isoPath);
         const sourceDir = options.stagingDir || await fs.promises.mkdtemp(path.join(os.tmpdir(), "tpp-pm4-"));
@@ -801,14 +1016,14 @@ async function exportIso(sourcePath, destinationPath, options = {}) {
     check(JSON.stringify(actual.resources) === JSON.stringify(expected.resources) && actual.isoSize === expected.isoSize, "The source ISO no longer matches this project.");
     if (expected.imageResources) check(JSON.stringify(actual.imageResources) === JSON.stringify(expected.imageResources), "Source image resources no longer match this project.");
     for (const name of Object.keys(options.images || {})) check(expected.imageResources?.some(r => r.name === name), "Unrecognized PM4 image replacement: " + name);
-    const handle = await fs.promises.open(sourcePath, "r"), patches = [], issues = [], warnings = [];
+    const handle = await fs.promises.open(sourcePath, "r"), patches = [], issues = [], warnings = [], stats = {pagedMessages: 0};
     let directory, plan = {placement: new Map(), reclaimed: []};
     try {
         for (const record of expected.resources) {
             const selected = options.translations?.[record.name]; if (!selected) continue;
             const original = await readAt(handle, record.offset, record.size, expected.isoSize);
             try {
-                const output = rebuildResource(original, record.name, {...selected, warnings});
+                const output = rebuildResource(original, record.name, {...selected, warnings, stats});
                 if (!output.equals(original)) patches.push({record, output, resizable: record.name !== EXECUTABLE});
             } catch (error) {
                 if (error.name !== "PM4TranslationError") throw error;
@@ -823,6 +1038,18 @@ async function exportIso(sourcePath, destinationPath, options = {}) {
                 const output = rebuildResource(original, record.name, {...(options.translations?.[record.name] || {}), expandTextWindows: true});
                 const existing = patches.find(p => p.record.name === record.name);
                 if (existing) existing.output = output; else if (!output.equals(original)) patches.push({record, output, resizable: true});
+            }
+        }
+        if (!issues.length && patches.some(p => p.record.name === "ITEM_NAM.TXT") && options.expandTextWindows !== false) {
+            const record = expected.resources.find(r => r.name === EXECUTABLE) ||
+                (await isoFiles(handle, 0, expected.isoSize)).find(r => r.name === EXECUTABLE);
+            if (record) {
+                const original = await readAt(handle, record.offset, record.size, expected.isoSize);
+                if (keyboard.isOriginalExecutable(original)) {
+                    const existing = patches.find(p => p.record.name === EXECUTABLE);
+                    const output = patchItemListCapacity(original, existing?.output || original);
+                    if (existing) existing.output = output; else patches.push({record, output});
+                }
             }
         }
         if (patches.some(p => p.resizable && p.output.length !== p.record.size)) {
@@ -905,8 +1132,8 @@ async function exportIso(sourcePath, destinationPath, options = {}) {
         // an existing file, including another hard link to the original disc.
         await fs.promises.link(temporary, destinationPath);
         return {path: destinationPath, patchedFiles: patches.map(p => p.record.name), size: expected.isoSize, resized: moved, reclaimed: plan.reclaimed,
-            warnings, warningLines: warningLines(warnings)};
+            pagedMessages: stats.pagedMessages, warnings, warningLines: warningLines(warnings)};
     } finally { if (ownsTemporary) await fs.promises.unlink(temporary).catch(() => {}); }
 }
-module.exports = {pm4Ps2Project, parseFile, writeFile, detectpm4Ps2, inspectIso, extractImages, exportIso, readG2, readItems, dataset, rebuildResource, validateResource, transformString, hashFile,
-    byteLimit, BYTE_LIMITS, HARD_BYTE_LIMIT, LINE_WIDTH, resourceWarnings, warningLines, occurrenceLimits, g2Program, relocateG2, verifyRelocation, textWindowConstants, TEXT_WINDOWS, planExtents};
+module.exports = {pm4Ps2Project, parseFile, writeFile, detectpm4Ps2, detectpm4Pc, inspectIso, inspectPcGame, extractImages, exportIso, exportPcGame, PC_FILES, readG2, readItems, dataset, rebuildResource, validateResource, transformString, hashFile,
+    byteLimit, BYTE_LIMITS, HARD_BYTE_LIMIT, LINE_WIDTH, resourceWarnings, warningLines, occurrenceLimits, g2Program, relocateG2, verifyRelocation, textWindowConstants, TEXT_WINDOWS, ITEM_LIST_CAPACITY, patchItemListCapacity, planExtents, paginate, PAGE_ROWS};

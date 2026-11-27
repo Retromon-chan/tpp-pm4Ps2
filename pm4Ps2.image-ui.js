@@ -29,6 +29,7 @@ module.exports = function install(addon, {trans, ui, common, addonLoader, OcrEng
     }
     function currentProject() {
         if (trans.project?.gameEngine !== "pm4Ps2") throw new Error("Open a Princess Maker 4 PS2 project first.");
+        if (trans.project.options?.init?.platform === "pc") throw new Error("Image editing is available for the PS2 disc only. The PC release stores its artwork in a different format.");
     }
     function imageEntries(data, options = {}) {
         return Object.entries({...data.project.files, ...options.imageTranslatorFiles}).filter(([, f]) => f.type === "image" && f.pm4Image);
@@ -220,6 +221,7 @@ module.exports = function install(addon, {trans, ui, common, addonLoader, OcrEng
     };
     addon.exportToFolder = async function(directory, data, options = {}) {
         data ||= trans.getSaveData(); const init = data.project.options.init;
+        if (init.platform === "pc") return addon.exportPcToFolder(directory, data, options);
         const translationDatas = options.translationDatas || trans.getTranslationData(data, options);
         const files = options.files?.length ? options.files : trans.getAllFiles(data, true);
         const translations = {}, images = {};
@@ -245,6 +247,8 @@ module.exports = function install(addon, {trans, ui, common, addonLoader, OcrEng
         options.imageTranslatorHandled = true;
         ui.log("Exported " + result.path + "; changed resources: " + (result.patchedFiles.join(", ") || "none"));
         for (const resized of result.resized || []) ui.log(resized.name + " is now " + resized.size + " bytes.");
+        if (result.pagedMessages) ui.log(result.pagedMessages + (result.pagedMessages === 1 ? " message is longer than its box and continues on a new page."
+            : " messages are longer than their box and continue on new pages."));
         if (result.reclaimed?.length) ui.log("Disc space reused from the debug-menu scripts: " + result.reclaimed.join(", ") + " (now empty).");
         if (result.warnings?.length) {
             ui.log("Exported with " + result.warnings.length + " warning" + (result.warnings.length === 1 ? "" : "s") + " (text may overflow or be cut off in game):");

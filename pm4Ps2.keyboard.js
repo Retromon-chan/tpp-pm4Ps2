@@ -157,9 +157,9 @@ function isEnabled(options = {}) { return usesLongNames(options) || (options.cus
 function resources(longNames) { return longNames ? [...RESOURCES, NAME_PROMPT] : RESOURCES; }
 function injectOptionFields() {
     return {
-        schema: {pm4EnglishKeyboard: {type: "boolean", title: "English name-entry keyboard", default: false,
+        schema: {pm4EnglishKeyboard: {type: "boolean", title: "English name-entry keyboard (PS2)", default: false,
             description: "Use uppercase and lowercase English letters, numbers and punctuation, with up to six full-width characters per field."},
-            pm4LongEnglishNames: {type: "boolean", title: "12-character English names", default: false,
+            pm4LongEnglishNames: {type: "boolean", title: "12-character English names (PS2)", default: false,
                 description: "Enable the English keyboard with up to 12 half-width characters in the surname and given name."}},
         form: [{key: "pm4EnglishKeyboard", fieldHtmlClass: "flipSwitch", inlinetitle: "Enable English keyboard"},
             {key: "pm4LongEnglishNames", fieldHtmlClass: "flipSwitch", inlinetitle: "Allow 12 half-width characters per name field"}]
