@@ -14,10 +14,10 @@ The add-on handles PS2 disc structures, G2 bytecode relocation, PC GCEX archives
 
 ## Sample
 
-<!-- On GitHub.com, replace the src below with a github.com/user-attachments/assets/... URL (drag an MP4 <= 10 MB into the GitHub web editor) to enable GitHub's inline video player -->
-<video src="showcase/english-sample.mp4" controls poster="showcase/shop.png" width="640">
-  <a href="showcase/english-sample.mp4">Watch / Download the English gameplay sample (MP4, 8:46)</a>
-</video>
+<!-- To enable GitHub's native inline video player, open README.md in the GitHub web editor and drag showcase/english-sample.mp4 (8.8 MB) here -->
+[![Watch the English gameplay sample (MP4, 8:46)][video-thumb]][video]
+
+[Watch / Download the English gameplay sample (MP4, 8:46)][video]
 
 ![Patricia speaking natural English in her bedroom with full English UI and stats][dialogue]
 
@@ -106,6 +106,8 @@ Detailed per-resource rules, byte limits, PC notes, and image workflows are docu
 *Independent community add-on. Not affiliated with Dreamsavior, GAINAX, or GeneX.*
 
 [cover]: showcase/cover.png
+[video]: showcase/english-sample.mp4
+[video-thumb]: showcase/video-thumb.png
 [dialogue]: showcase/dialogue.png
 [status]: showcase/status.png
 [name-entry]: showcase/name-entry.jpg
